@@ -18,6 +18,8 @@ class Router {
                 'dashboard/stats' => ['DashboardController', 'stats'],
                 'admin/user/list' => ['AdminController', 'userList'],
                 'admin/license/info' => ['AdminController', 'licenseInfo'],
+                'admin/license/list' => ['AdminController', 'licenseList'],
+                'admin/license/detail' => ['AdminController', 'licenseDetail'],
                 'admin/audit/logs' => ['AdminController', 'auditLogs'],
                 'client/profile' => ['ClientController', 'profile'],
                 'client/contracts' => ['ClientController', 'contracts']
@@ -33,7 +35,8 @@ class Router {
                 'opportunity/create' => ['OpportunityController', 'create'],
                 'opportunity/update' => ['OpportunityController', 'update'],
                 'admin/user/create' => ['AdminController', 'userCreate'],
-                'admin/license/verify' => ['AdminController', 'licenseVerify']
+                'admin/license/verify' => ['AdminController', 'licenseVerify'],
+                'admin/license/activate' => ['AdminController', 'licenseActivate']
             ],
             'PUT' => [
                 'customer/update' => ['CustomerController', 'update'],

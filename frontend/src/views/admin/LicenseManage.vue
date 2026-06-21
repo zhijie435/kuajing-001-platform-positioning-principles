@@ -3,7 +3,7 @@
     <div class="page-header">
       <h2>License 管理</h2>
       <el-button type="primary" @click="showVerifyDialog">
-        <el-icon><Key /></el-icon>验证 License
+        <el-icon><Key /></el-icon>验证并保存 License
       </el-button>
     </div>
 
@@ -15,9 +15,12 @@
         <div class="license-info">
           <div class="license-key">
             <el-tag :type="editionTagType" effect="dark" size="large">
-              {{ license.edition }}
+              {{ license.edition || '加载中' }}
             </el-tag>
             <span class="key-text">{{ license.key }}</span>
+            <el-tag v-if="license.updated_at" type="info" size="small" effect="plain">
+              更新于 {{ license.updated_at }}
+            </el-tag>
           </div>
           <el-progress
             :percentage="licenseProgress"
@@ -47,7 +50,7 @@
           <div class="quota-item">
             <div class="quota-label">客户配额</div>
             <div class="quota-value">
-              <b style="color:#67c23a">{{ license.max_clients.toLocaleString() }}</b> / 上限
+              <b style="color:#67c23a">{{ (license.max_clients || 0).toLocaleString() }}</b> / 上限
             </div>
           </div>
         </el-col>
@@ -85,7 +88,54 @@
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" title="验证 License Key" width="480px">
+    <el-card shadow="never" style="margin-top: 20px">
+      <template #header>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <b>License 记录列表</b>
+          <el-tag type="info" size="small">共 {{ licenseList.length }} 条（按 Key 去重，激活态置顶）</el-tag>
+        </div>
+      </template>
+      <el-table :data="licenseList" v-loading="listLoading" stripe>
+        <el-table-column label="License Key" min-width="220">
+          <template #default="{ row }">
+            <span style="font-family:monospace">{{ row.license_key }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="版本" width="100">
+          <template #default="{ row }">
+            <el-tag :type="editionCodeTagType(row.edition_code)" size="small">{{ row.edition_label }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="expire" label="到期日期" width="130" />
+        <el-table-column label="剩余天数" width="110">
+          <template #default="{ row }">
+            <span :style="row.days_left <= 30 ? 'color:#f56c6c;font-weight:600' : ''">{{ row.days_left }} 天</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'active'" type="success" effect="dark" size="small">激活中</el-tag>
+            <el-tag v-else-if="row.status === 'expired'" type="danger" size="small">已过期</el-tag>
+            <el-tag v-else type="info" size="small">备用</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="updated_at" label="更新时间" width="170" />
+        <el-table-column label="操作" width="180" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="viewDetail(row)">查看详情</el-button>
+            <el-button
+              v-if="row.status !== 'active' && row.status !== 'expired'"
+              size="small"
+              link
+              type="warning"
+              @click="activate(row)"
+            >设为激活</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <el-dialog v-model="dialogVisible" title="验证并保存 License Key" width="480px">
       <el-form label-width="100px">
         <el-form-item label="License Key" required>
           <el-input
@@ -94,9 +144,12 @@
             size="large"
           />
         </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="verifyForm.remark" placeholder="可选，如：续费采购" />
+        </el-form-item>
         <el-form-item>
           <el-alert
-            title="格式示例：CRM-LICENSE-2026-STD / CRM-LICENSE-2026-PRO / CRM-LICENSE-2026-ENT"
+            title="验证通过后将覆盖同 Key 记录并设为激活，列表与详情会立即刷新"
             type="info"
             :closable="false"
             show-icon
@@ -105,7 +158,36 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="doVerify" :loading="verifying">验证</el-button>
+        <el-button type="primary" @click="doVerify" :loading="verifying">验证并保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="detailVisible" title="License 详情" width="560px">
+      <el-descriptions v-if="detail" :column="1" border>
+        <el-descriptions-item label="License Key">
+          <span style="font-family:monospace">{{ detail.license_key }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="版本">
+          <el-tag :type="editionCodeTagType(detail.edition_code)">{{ detail.edition_label }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="到期日期">{{ detail.expire }}</el-descriptions-item>
+        <el-descriptions-item label="剩余天数">{{ detail.days_left }} 天</el-descriptions-item>
+        <el-descriptions-item label="用户上限">{{ detail.max_users }}</el-descriptions-item>
+        <el-descriptions-item label="客户上限">{{ (detail.max_clients || 0).toLocaleString() }}</el-descriptions-item>
+        <el-descriptions-item label="签发日期">{{ detail.issued_at || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="更新时间">{{ detail.updated_at }}</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag v-if="detail.status === 'active'" type="success" effect="dark">激活中</el-tag>
+          <el-tag v-else-if="detail.status === 'expired'" type="danger">已过期</el-tag>
+          <el-tag v-else type="info">备用</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="备注">{{ detail.remark || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="可用功能">
+          <el-tag v-for="f in (detail.features || [])" :key="f" size="small" style="margin:2px">{{ f }}</el-tag>
+        </el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button @click="detailVisible = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -113,19 +195,24 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Key, Medal } from '@element-plus/icons-vue'
-import { getLicenseInfo, verifyLicense } from '@/api'
+import {
+  getLicenseInfo, verifyLicense, getLicenseList, getLicenseDetail, activateLicense
+} from '@/api'
 
 const license = ref({
   key: '',
+  full_key: '',
   edition: '',
+  edition_code: '',
   expire: '',
+  issued_at: '',
+  updated_at: '',
   days_left: 0,
   max_users: 0,
   max_clients: 0,
-  features: [],
-  issued_at: ''
+  features: []
 })
 
 const editions = [
@@ -139,7 +226,7 @@ const featureTable = ref([
   { feature: '跟进记录', standard: true, professional: true, enterprise: true, desc: '电话/拜访/微信/邮件记录' },
   { feature: '商机管理', standard: false, professional: true, enterprise: true, desc: '商机阶段、赢单率、漏斗分析' },
   { feature: '数据报表', standard: false, professional: true, enterprise: true, desc: '业绩报表、销售排行' },
-  { feature: '高级分析', standard: false, false: false, enterprise: true, professional: false, desc: 'BI多维分析、自定义报表' },
+  { feature: '高级分析', standard: false, professional: false, enterprise: true, desc: 'BI多维分析、自定义报表' },
   { feature: '系统定制', standard: false, professional: false, enterprise: true, desc: '工作流、字段自定义' },
   { feature: 'API 访问', standard: false, professional: false, enterprise: true, desc: '开放 REST API 接口' }
 ])
@@ -149,18 +236,27 @@ const licenseProgress = computed(() => {
   return Math.min(100, Math.round(((total - license.value.days_left) / total) * 100))
 })
 
-const editionTagType = computed(() => {
-  if (license.value.edition?.includes('企业')) return 'danger'
-  if (license.value.edition?.includes('专业')) return 'warning'
+const editionTagType = computed(() => editionCodeTagType(license.value.edition_code))
+
+function editionCodeTagType(code) {
+  if (code === 'enterprise') return 'danger'
+  if (code === 'professional') return 'warning'
   return 'primary'
-})
+}
+
+const licenseList = ref([])
+const listLoading = ref(false)
 
 const dialogVisible = ref(false)
 const verifying = ref(false)
-const verifyForm = reactive({ key: '' })
+const verifyForm = reactive({ key: '', remark: '' })
+
+const detailVisible = ref(false)
+const detail = ref(null)
 
 function showVerifyDialog() {
   verifyForm.key = ''
+  verifyForm.remark = ''
   dialogVisible.value = true
 }
 
@@ -171,11 +267,11 @@ async function doVerify() {
   }
   verifying.value = true
   try {
-    const res = await verifyLicense({ license_key: verifyForm.key })
+    const res = await verifyLicense({ license_key: verifyForm.key, remark: verifyForm.remark })
     if (res.code === 0) {
-      ElMessage.success('License 验证通过！版本：' + res.data.edition)
+      ElMessage.success('License 验证通过并已保存激活，版本：' + res.data.edition)
       dialogVisible.value = false
-      loadLicense()
+      await Promise.all([loadLicense(), loadList()])
     }
   } finally {
     verifying.value = false
@@ -193,7 +289,53 @@ async function loadLicense() {
   }
 }
 
-onMounted(loadLicense)
+async function loadList() {
+  listLoading.value = true
+  try {
+    const res = await getLicenseList()
+    if (res.code === 0) {
+      licenseList.value = res.data.list
+    }
+  } catch (e) {
+    console.warn(e)
+  } finally {
+    listLoading.value = false
+  }
+}
+
+async function viewDetail(row) {
+  try {
+    const res = await getLicenseDetail({ license_key: row.license_key })
+    if (res.code === 0) {
+      detail.value = res.data.detail
+      detailVisible.value = true
+    }
+  } catch (e) {
+    console.warn(e)
+  }
+}
+
+async function activate(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确认将 License【${row.license_key}】设为激活？切换后商用边界将按此版本生效。`,
+      '切换激活确认',
+      { type: 'warning' }
+    )
+    const res = await activateLicense({ license_key: row.license_key })
+    if (res.code === 0) {
+      ElMessage.success('已切换激活')
+      await Promise.all([loadLicense(), loadList()])
+    }
+  } catch (e) {
+    if (e !== 'cancel') console.warn(e)
+  }
+}
+
+onMounted(() => {
+  loadLicense()
+  loadList()
+})
 </script>
 
 <style lang="scss" scoped>

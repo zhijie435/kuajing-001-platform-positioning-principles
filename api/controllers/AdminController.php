@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../core/Response.php';
+require_once __DIR__ . '/../core/LicenseStore.php';
 require_once __DIR__ . '/../guard/RedLineGuard.php';
 require_once __DIR__ . '/../guard/CommercialGuard.php';
 require_once __DIR__ . '/../guard/PlatformGuard.php';
@@ -71,6 +72,11 @@ class AdminController {
     public function licenseInfo($input) {
         Response::success([
             'license' => CommercialGuard::getLicenseInfo(),
+            'active_detail' => LicenseStore::getActive(),
+            'list_summary' => [
+                'total' => count(LicenseStore::getList()),
+                'active_key' => LicenseStore::getActiveLicenseKey()
+            ],
             'violations' => CommercialGuard::getViolations(),
             'redline_status' => [
                 'ip_whitelist' => RED_LINE_IP_WHITELIST,
@@ -85,28 +91,96 @@ class AdminController {
 
     public function licenseVerify($input) {
         $key = trim($input['license_key'] ?? '');
+        $remark = trim($input['remark'] ?? '');
         if (!$key) {
             Response::badRequest('License Key 不能为空');
         }
 
-        $pattern = '/^CRM-LICENSE-\d{4}-(STD|PRO|ENT)$/';
-        if (!preg_match($pattern, $key)) {
+        if (!LicenseStore::verifySignature($key)) {
             Response::error(400, 'License Key 格式无效', ['valid' => false]);
         }
 
-        $editionMap = ['STD' => '标准版', 'PRO' => '专业版', 'ENT' => '企业版'];
-        $edition = substr($key, -3);
+        $saved = LicenseStore::save($key, [
+            'remark' => $remark,
+            'expire' => date('Y-m-d', strtotime('+1 year'))
+        ]);
+
+        if (!$saved) {
+            Response::error(500, 'License 保存失败');
+        }
+
+        CommercialGuard::refreshActiveLicense();
 
         Response::success([
             'valid' => true,
+            'saved' => true,
             'license_key' => $key,
-            'edition' => $editionMap[$edition] ?? '标准版',
-            'edition_code' => strtolower($edition),
-            'expire' => date('Y-m-d', strtotime('+1 year')),
-            'max_users' => $edition === 'ENT' ? 500 : ($edition === 'PRO' ? 200 : 100),
-            'max_clients' => $edition === 'ENT' ? 100000 : ($edition === 'PRO' ? 50000 : 10000),
-            'features' => CommercialGuard::getLicenseInfo()['features']
-        ], 'License 校验通过');
+            'edition' => $saved['edition_label'],
+            'edition_code' => $saved['edition_code'],
+            'expire' => $saved['expire'],
+            'issued_at' => $saved['issued_at'],
+            'max_users' => $saved['max_users'],
+            'max_clients' => $saved['max_clients'],
+            'features' => $saved['features'],
+            'remark' => $saved['remark'],
+            'updated_at' => $saved['updated_at'],
+            'is_active' => true,
+            'detail' => LicenseStore::getDetail($key)
+        ], 'License 校验通过并已保存激活');
+    }
+
+    public function licenseList($input) {
+        $list = LicenseStore::getList();
+        $activeKey = LicenseStore::getActiveLicenseKey();
+
+        Response::success([
+            'list' => $list,
+            'total' => count($list),
+            'active_key' => $activeKey,
+            'current_license' => CommercialGuard::getLicenseInfo()
+        ]);
+    }
+
+    public function licenseDetail($input) {
+        $key = trim($input['license_key'] ?? '');
+        if (!$key) {
+            Response::badRequest('license_key 不能为空');
+        }
+
+        $detail = LicenseStore::getDetail($key);
+        if (!$detail) {
+            Response::notFound('License 记录不存在');
+        }
+
+        Response::success([
+            'detail' => $detail,
+            'current_license' => CommercialGuard::getLicenseInfo()
+        ]);
+    }
+
+    public function licenseActivate($input) {
+        $key = trim($input['license_key'] ?? '');
+        if (!$key) {
+            Response::badRequest('license_key 不能为空');
+        }
+
+        if (!LicenseStore::verifySignature($key)) {
+            Response::error(400, 'License Key 格式无效');
+        }
+
+        $ok = LicenseStore::setActive($key);
+        if (!$ok) {
+            Response::notFound('License 记录不存在，请先验证保存');
+        }
+
+        CommercialGuard::refreshActiveLicense();
+
+        Response::success([
+            'license_key' => $key,
+            'is_active' => true,
+            'detail' => LicenseStore::getDetail($key),
+            'current_license' => CommercialGuard::getLicenseInfo()
+        ], 'License 已切换激活');
     }
 
     public function auditLogs($input) {

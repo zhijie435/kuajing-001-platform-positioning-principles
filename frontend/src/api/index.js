@@ -1,4 +1,4 @@
-import { get, post } from './request'
+import { get, post, put } from './request'
 
 export function getFollowupList(params) {
   return get('/followup/list', params)
@@ -38,6 +38,18 @@ export function getLicenseInfo() {
 
 export function verifyLicense(data) {
   return post('/admin/license/verify', data)
+}
+
+export function getLicenseList(params) {
+  return get('/admin/license/list', params)
+}
+
+export function getLicenseDetail(params) {
+  return get('/admin/license/detail', params)
+}
+
+export function activateLicense(data) {
+  return post('/admin/license/activate', data)
 }
 
 export function getAuditLogs(params) {

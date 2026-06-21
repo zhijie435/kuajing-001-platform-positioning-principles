@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/../core/LicenseStore.php';
+
 class CommercialGuard {
     const ERROR_LICENSE_INVALID = 4101;
     const ERROR_LICENSE_EXPIRED = 4102;
@@ -8,6 +10,7 @@ class CommercialGuard {
     const ERROR_TRIAL_EXPIRED = 4106;
 
     private static $violations = [];
+    private static $activeLicense = null;
 
     public static function validate() {
         $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -26,30 +29,61 @@ class CommercialGuard {
         return (bool)preg_match('#^/api/auth/(login|platform-info|refresh)$#', $uri);
     }
 
-    private static function validateLicense() {
-        $licenseKey = self::getRequestLicenseKey();
-        if (!$licenseKey) {
-            $licenseKey = LICENSE_KEY;
+    public static function getActiveLicense() {
+        if (self::$activeLicense !== null) {
+            return self::$activeLicense;
         }
 
-        if (!self::verifyLicenseSignature($licenseKey)) {
+        $active = LicenseStore::getActive();
+        if ($active) {
+            self::$activeLicense = $active;
+            return $active;
+        }
+
+        $key = LICENSE_KEY;
+        $editionSuffix = substr($key, -3);
+        $editionInfo = LicenseStore::EDITION_MAP[$editionSuffix] ?? LicenseStore::EDITION_MAP['STD'];
+        self::$activeLicense = [
+            'license_key' => $key,
+            'edition_code' => $editionInfo['code'],
+            'edition_label' => $editionInfo['label'],
+            'expire' => LICENSE_EXPIRE,
+            'max_users' => LICENSE_MAX_USERS,
+            'max_clients' => LICENSE_MAX_CLIENTS,
+            'features' => self::getEditionFeatures($editionInfo['code'])
+        ];
+        return self::$activeLicense;
+    }
+
+    public static function refreshActiveLicense() {
+        self::$activeLicense = null;
+        return self::getActiveLicense();
+    }
+
+    private static function validateLicense() {
+        $license = self::getActiveLicense();
+        $licenseKey = $license['license_key'] ?? LICENSE_KEY;
+
+        if (!LicenseStore::verifySignature($licenseKey)) {
             self::recordViolation('invalid_license', ['key' => substr($licenseKey, 0, 8) . '***']);
             throw new Exception('License 签名校验失败，系统未授权', self::ERROR_LICENSE_INVALID);
         }
     }
 
     private static function validateExpiration() {
-        $expireDate = strtotime(LICENSE_EXPIRE);
+        $license = self::getActiveLicense();
+        $expireStr = $license['expire'] ?? LICENSE_EXPIRE;
+        $expireDate = strtotime($expireStr);
         $today = time();
 
         if ($today > $expireDate) {
             self::recordViolation('license_expired', [
-                'expired_at' => LICENSE_EXPIRE,
+                'expired_at' => $expireStr,
                 'days_overdue' => floor(($today - $expireDate) / 86400)
             ]);
             throw new Exception(sprintf(
                 'License 已过期 (%s)，请联系商务续费',
-                LICENSE_EXPIRE
+                $expireStr
             ), self::ERROR_LICENSE_EXPIRED);
         }
 
@@ -66,6 +100,10 @@ class CommercialGuard {
         $subModule = $uriParts[1] ?? '';
         $featureKey = $module . ($subModule ? '_' . $subModule : '');
 
+        if ($module === 'auth' || $module === 'dashboard' || $module === 'admin') {
+            return true;
+        }
+
         $edition = self::getCurrentEdition();
         $allowedFeatures = self::getEditionFeatures($edition);
 
@@ -81,8 +119,7 @@ class CommercialGuard {
             }
         }
 
-        $bypassModules = ['auth', 'dashboard'];
-        if (!$featureMatched && !in_array($module, $bypassModules)) {
+        if (!$featureMatched) {
             self::recordViolation('feature_out_of_boundary', [
                 'module' => $module,
                 'feature' => $featureKey,
@@ -100,71 +137,74 @@ class CommercialGuard {
     }
 
     public static function validateUserQuota($currentUserCount) {
-        if ($currentUserCount >= LICENSE_MAX_USERS) {
+        $license = self::getActiveLicense();
+        $maxUsers = $license['max_users'] ?? LICENSE_MAX_USERS;
+        if ($currentUserCount >= $maxUsers) {
             self::recordViolation('user_limit_exceeded', [
                 'current' => $currentUserCount,
-                'limit' => LICENSE_MAX_USERS
+                'limit' => $maxUsers
             ]);
             throw new Exception(sprintf(
                 '用户数已达上限 (%d/%d)，请扩容',
                 $currentUserCount,
-                LICENSE_MAX_USERS
+                $maxUsers
             ), self::ERROR_USER_LIMIT_EXCEEDED);
         }
         return true;
     }
 
     public static function validateClientQuota($currentClientCount) {
-        if ($currentClientCount >= LICENSE_MAX_CLIENTS) {
+        $license = self::getActiveLicense();
+        $maxClients = $license['max_clients'] ?? LICENSE_MAX_CLIENTS;
+        if ($currentClientCount >= $maxClients) {
             self::recordViolation('client_limit_exceeded', [
                 'current' => $currentClientCount,
-                'limit' => LICENSE_MAX_CLIENTS
+                'limit' => $maxClients
             ]);
             throw new Exception(sprintf(
                 '客户数已达上限 (%d/%d)，请扩容',
                 $currentClientCount,
-                LICENSE_MAX_CLIENTS
+                $maxClients
             ), self::ERROR_CLIENT_LIMIT_EXCEEDED);
         }
         return true;
     }
 
-    private static function verifyLicenseSignature($licenseKey) {
-        $pattern = '/^CRM-LICENSE-\d{4}-(STD|PRO|ENT)$/';
-        return (bool)preg_match($pattern, $licenseKey);
-    }
-
-    private static function getRequestLicenseKey() {
-        return $_SERVER['HTTP_X_LICENSE_KEY'] ?? null;
-    }
-
-    private static function getCurrentEdition() {
-        $key = LICENSE_KEY;
-        if (strpos($key, '-ENT') !== false) return 'enterprise';
-        if (strpos($key, '-PRO') !== false) return 'professional';
-        return 'standard';
+    public static function getCurrentEdition() {
+        $license = self::getActiveLicense();
+        return $license['edition_code'] ?? 'standard';
     }
 
     private static function getEditionFeatures($edition) {
         $boundary = COMMERCIAL_FEATURE_BOUNDARY;
         $features = [];
-        foreach ($boundary as $ed => $feats) {
-            $features = array_merge($features, $feats);
+        $priority = ['standard', 'professional', 'enterprise'];
+        foreach ($priority as $ed) {
+            if (!isset($boundary[$ed])) continue;
+            $features = array_merge($features, $boundary[$ed]);
             if ($ed === $edition) break;
         }
         return $features;
     }
 
     public static function getLicenseInfo() {
+        $license = self::getActiveLicense();
+        $expireStr = $license['expire'] ?? LICENSE_EXPIRE;
+        $daysLeft = max(0, floor((strtotime($expireStr) - time()) / 86400));
+
         return [
-            'key' => substr(LICENSE_KEY, 0, 12) . '***',
-            'edition' => self::getCurrentEdition(),
-            'expire' => LICENSE_EXPIRE,
-            'days_left' => max(0, floor((strtotime(LICENSE_EXPIRE) - time()) / 86400)),
-            'max_users' => LICENSE_MAX_USERS,
-            'max_clients' => LICENSE_MAX_CLIENTS,
+            'key' => substr($license['license_key'] ?? LICENSE_KEY, 0, 12) . '***',
+            'full_key' => $license['license_key'] ?? LICENSE_KEY,
+            'edition' => $license['edition_label'] ?? '标准版',
+            'edition_code' => $license['edition_code'] ?? 'standard',
+            'expire' => $expireStr,
+            'issued_at' => $license['issued_at'] ?? null,
+            'days_left' => $daysLeft,
+            'max_users' => $license['max_users'] ?? LICENSE_MAX_USERS,
+            'max_clients' => $license['max_clients'] ?? LICENSE_MAX_CLIENTS,
             'features' => self::getEditionFeatures(self::getCurrentEdition()),
-            'boundary' => COMMERCIAL_FEATURE_BOUNDARY
+            'boundary' => COMMERCIAL_FEATURE_BOUNDARY,
+            'updated_at' => $license['updated_at'] ?? null
         ];
     }
 

@@ -70,16 +70,24 @@ class PlatformGuard {
         $uri = preg_replace('#^/api/#', '', $uri);
         $uriParts = explode('/', $uri);
         $module = $uriParts[0] ?? '';
+        $subModule = $uriParts[1] ?? '';
 
         if ($module === 'auth') {
             return true;
         }
 
-        if ($module === 'admin' && $platformType !== 'admin') {
-            return false;
+        if ($module === 'admin') {
+            if ($platformType !== 'admin') {
+                return false;
+            }
+            return $subModule === '' || in_array($subModule, $allowedEndpoints);
         }
-        if ($module === 'client' && $platformType !== 'client') {
-            return false;
+
+        if ($module === 'client') {
+            if ($platformType !== 'client') {
+                return false;
+            }
+            return $subModule === '' || in_array($subModule, $allowedEndpoints);
         }
 
         return in_array($module, $allowedEndpoints) || empty($module);
