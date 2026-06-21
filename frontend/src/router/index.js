@@ -54,6 +54,18 @@ function getRoutes() {
             name: 'audit',
             component: () => import('@/views/admin/AuditLog.vue'),
             meta: { title: '审计日志', icon: 'Document' }
+          },
+          {
+            path: 'audit-manage',
+            name: 'audit-manage',
+            component: () => import('@/views/admin/AuditManage.vue'),
+            meta: { title: '数据审核', icon: 'CheckCircle' }
+          },
+          {
+            path: 'redline-config',
+            name: 'redline-config',
+            component: () => import('@/views/admin/RedLineConfig.vue'),
+            meta: { title: '红线规则', icon: 'Safety' }
           }
         ]
       },
@@ -123,6 +135,12 @@ function getRoutes() {
           name: 'opportunity',
           component: () => import('@/views/sales/OpportunityList.vue'),
           meta: { title: '商机管理', icon: 'Money' }
+        },
+        {
+          path: 'audit',
+          name: 'sales-audit',
+          component: () => import('@/views/admin/AuditManage.vue'),
+          meta: { title: '我的审核', icon: 'CheckCircle' }
         }
       ]
     },

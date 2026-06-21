@@ -63,3 +63,43 @@ export function getClientProfile() {
 export function getClientContracts() {
   return get('/client/contracts')
 }
+
+export function getAuditList(params) {
+  return get('/audit/list', params)
+}
+
+export function getAuditDetail(params) {
+  return get('/audit/detail', params)
+}
+
+export function submitAudit(data) {
+  return post('/audit/submit', data)
+}
+
+export function approveAudit(data) {
+  return post('/audit/approve', data)
+}
+
+export function rejectAudit(data) {
+  return post('/audit/reject', data)
+}
+
+export function retryWriteback(data) {
+  return post('/audit/retry-writeback', data)
+}
+
+export function getMyPendingAudit(params) {
+  return get('/audit/my-pending', params)
+}
+
+export function getAuditStats(params) {
+  return get('/audit/stats', params)
+}
+
+export function getRedlineConfig(params) {
+  return get('/admin/redline/config', params)
+}
+
+export function updateRedlineConfig(data) {
+  return post('/admin/redline/update', data)
+}

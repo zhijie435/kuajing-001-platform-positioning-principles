@@ -203,6 +203,92 @@ CREATE TABLE crm_ip_whitelist (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='IP白名单表';
 
 -- ============================================
+-- 数据审核主表
+-- ============================================
+DROP TABLE IF EXISTS crm_audit_record;
+CREATE TABLE crm_audit_record (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    audit_no VARCHAR(64) NOT NULL UNIQUE COMMENT '审核单号',
+    target_type VARCHAR(32) NOT NULL COMMENT '审核目标类型: customer/opportunity/contract',
+    target_id INT UNSIGNED DEFAULT 0 COMMENT '目标记录ID(新建时为0)',
+    operation_type VARCHAR(32) NOT NULL COMMENT '操作类型: create/update/delete/level_upgrade/stage_change/won/lost/sign/cancel',
+    operation_label VARCHAR(64) DEFAULT '' COMMENT '操作描述',
+    data_before TEXT COMMENT '变更前数据(JSON)',
+    data_after TEXT COMMENT '变更后数据(JSON)',
+    change_summary VARCHAR(500) DEFAULT '' COMMENT '变更摘要',
+    status VARCHAR(32) NOT NULL DEFAULT 'pending' COMMENT '审核状态: pending/approved/rejected/writeback_success/writeback_failed',
+    submitter_id INT UNSIGNED NOT NULL COMMENT '提交人ID',
+    submitter_name VARCHAR(64) NOT NULL COMMENT '提交人姓名',
+    submitter_platform VARCHAR(16) NOT NULL COMMENT '提交端: admin/sales/client',
+    submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '提交时间',
+    auditor_id INT UNSIGNED DEFAULT 0 COMMENT '审核人ID',
+    auditor_name VARCHAR(64) DEFAULT '' COMMENT '审核人姓名',
+    audit_remark VARCHAR(500) DEFAULT '' COMMENT '审核意见',
+    audited_at DATETIME DEFAULT NULL COMMENT '审核时间',
+    writeback_attempts TINYINT DEFAULT 0 COMMENT '回写尝试次数',
+    writeback_error VARCHAR(500) DEFAULT '' COMMENT '回写错误信息',
+    writeback_at DATETIME DEFAULT NULL COMMENT '回写时间',
+    remark VARCHAR(255) DEFAULT '' COMMENT '备注',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_target (target_type, target_id),
+    INDEX idx_status (status),
+    INDEX idx_submitter (submitter_id),
+    INDEX idx_auditor (auditor_id),
+    INDEX idx_submitted (submitted_at),
+    INDEX idx_platform (submitter_platform),
+    INDEX idx_operation (operation_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='数据审核主表';
+
+-- ============================================
+-- 审核操作日志表
+-- ============================================
+DROP TABLE IF EXISTS crm_audit_log;
+CREATE TABLE crm_audit_log (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    audit_id BIGINT UNSIGNED NOT NULL COMMENT '审核记录ID',
+    audit_no VARCHAR(64) DEFAULT '' COMMENT '审核单号',
+    action VARCHAR(32) NOT NULL COMMENT '操作: submit/approve/reject/writeback_success/writeback_failed/retry',
+    action_label VARCHAR(64) DEFAULT '' COMMENT '操作描述',
+    operator_id INT UNSIGNED DEFAULT 0 COMMENT '操作人ID',
+    operator_name VARCHAR(64) DEFAULT '' COMMENT '操作人姓名',
+    operator_platform VARCHAR(16) DEFAULT '' COMMENT '操作端',
+    remark VARCHAR(500) DEFAULT '' COMMENT '备注/意见',
+    extra_data TEXT COMMENT '扩展数据(JSON)',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_audit (audit_id),
+    INDEX idx_action (action),
+    INDEX idx_operator (operator_id),
+    INDEX idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='审核操作日志表';
+
+-- ============================================
+-- 三端红线规则配置表
+-- ============================================
+DROP TABLE IF EXISTS crm_redline_config;
+CREATE TABLE crm_redline_config (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    platform VARCHAR(16) NOT NULL UNIQUE COMMENT '平台: admin/sales/client',
+    enabled TINYINT DEFAULT 1 COMMENT '是否启用',
+    ip_whitelist TEXT COMMENT 'IP白名单(JSON数组)',
+    ip_whitelist_enforce TINYINT DEFAULT 0 COMMENT '是否强制IP白名单',
+    access_hours_start VARCHAR(8) DEFAULT '00:00' COMMENT '允许访问开始时间',
+    access_hours_end VARCHAR(8) DEFAULT '23:59' COMMENT '允许访问结束时间',
+    access_hours_enforce TINYINT DEFAULT 0 COMMENT '是否强制访问时段',
+    max_requests_per_minute INT DEFAULT 300 COMMENT '每分钟最大请求数',
+    session_timeout INT DEFAULT 7200 COMMENT '会话超时时间(秒)',
+    require_device_fingerprint TINYINT DEFAULT 0 COMMENT '是否要求设备指纹',
+    device_fingerprint_threshold DECIMAL(3,2) DEFAULT 0.60 COMMENT '设备指纹相似度阈值',
+    allow_multi_device_login TINYINT DEFAULT 1 COMMENT '是否允许多设备登录',
+    sensitive_operation_2fa TINYINT DEFAULT 0 COMMENT '敏感操作是否需要二次验证',
+    updated_by INT UNSIGNED DEFAULT 0 COMMENT '更新人ID',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_platform (platform),
+    INDEX idx_enabled (enabled)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='三端红线规则配置表';
+
+-- ============================================
 -- 初始化数据
 -- ============================================
 
@@ -241,3 +327,14 @@ INSERT INTO crm_followup (customer_id, customer_name, type, content, followup_ti
 INSERT INTO crm_opportunity (customer_id, customer_name, name, amount, stage, probability, expected_close, description, owner_id, owner_name) VALUES
 (2, '李娜', '2026年度CRM系统采购项目', 1200000, 'negotiation', 75, '2026-07-15', '客户计划Q3完成采购，涉及50个用户授权', 2, '张销售'),
 (1, '张伟', 'SaaS平台定制化开发', 580000, 'proposal', 50, '2026-08-01', '已提交初步方案，等待客户技术评审', 2, '张销售');
+
+-- 初始红线配置
+INSERT INTO crm_redline_config (platform, enabled, ip_whitelist, ip_whitelist_enforce, access_hours_start, access_hours_end, access_hours_enforce, max_requests_per_minute, session_timeout, require_device_fingerprint, device_fingerprint_threshold, allow_multi_device_login, sensitive_operation_2fa) VALUES
+('admin', 1, '["127.0.0.1","::1","192.168.0.0/16","10.0.0.0/8"]', 1, '08:00', '22:00', 0, 100, 1800, 1, 0.80, 0, 1),
+('sales', 1, '[]', 0, '07:00', '23:00', 0, 200, 3600, 0, 0.60, 1, 0),
+('client', 1, '[]', 0, '00:00', '23:59', 0, 60, 86400, 0, 0.50, 1, 1);
+
+-- 初始审核记录示例
+INSERT INTO crm_audit_record (audit_no, target_type, target_id, operation_type, operation_label, data_before, data_after, change_summary, status, submitter_id, submitter_name, submitter_platform, submitted_at) VALUES
+('AUD202606220001', 'customer', 3, 'level_upgrade', '客户等级升级', '{"level":"C"}', '{"level":"B"}', '客户等级从C升级到B', 'pending', 3, '李销售', 'sales', '2026-06-22 10:30:00'),
+('AUD202606220002', 'customer', 0, 'create', '新增客户', '{}', '{"name":"赵六","company":"小米科技","phone":"13800138006","level":"B"}', '新增客户：赵六-小米科技', 'approved', 2, '张销售', 'sales', '2026-06-21 14:00:00');

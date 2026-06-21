@@ -21,6 +21,11 @@ class Router {
                 'admin/license/list' => ['AdminController', 'licenseList'],
                 'admin/license/detail' => ['AdminController', 'licenseDetail'],
                 'admin/audit/logs' => ['AdminController', 'auditLogs'],
+                'admin/redline/config' => ['AdminController', 'redlineConfig'],
+                'audit/list' => ['AuditController', 'list'],
+                'audit/detail' => ['AuditController', 'detail'],
+                'audit/my-pending' => ['AuditController', 'myPending'],
+                'audit/stats' => ['AuditController', 'stats'],
                 'client/profile' => ['ClientController', 'profile'],
                 'client/contracts' => ['ClientController', 'contracts']
             ],
@@ -36,7 +41,12 @@ class Router {
                 'opportunity/update' => ['OpportunityController', 'update'],
                 'admin/user/create' => ['AdminController', 'userCreate'],
                 'admin/license/verify' => ['AdminController', 'licenseVerify'],
-                'admin/license/activate' => ['AdminController', 'licenseActivate']
+                'admin/license/activate' => ['AdminController', 'licenseActivate'],
+                'admin/redline/update' => ['AdminController', 'redlineUpdate'],
+                'audit/submit' => ['AuditController', 'submit'],
+                'audit/approve' => ['AuditController', 'approve'],
+                'audit/reject' => ['AuditController', 'reject'],
+                'audit/retry-writeback' => ['AuditController', 'retryWriteback']
             ],
             'PUT' => [
                 'customer/update' => ['CustomerController', 'update'],

@@ -211,4 +211,95 @@ class AdminController {
             'page_size' => $pageSize
         ]);
     }
+
+    public function redlineConfig($input) {
+        $user = RedLineGuard::getCurrentUser();
+        if (!$user || !in_array($user['role'] ?? '', ['super_admin', 'admin'])) {
+            Response::forbidden('无权限查看红线配置');
+        }
+
+        $allConfigs = RedLineGuard::getAllPlatformRedLineStatus();
+        $currentStatus = RedLineGuard::getPlatformRedLineStatus();
+
+        Response::success([
+            'all_platforms' => $allConfigs,
+            'current_platform' => $currentStatus,
+            'platform_options' => [
+                ['value' => 'admin', 'label' => '管理端'],
+                ['value' => 'sales', 'label' => '销售端'],
+                ['value' => 'client', 'label' => '客户端']
+            ],
+            'global_default' => [
+                'ip_whitelist' => RED_LINE_IP_WHITELIST,
+                'access_hours' => RED_LINE_ACCESS_HOURS,
+                'max_requests_per_minute' => RED_LINE_MAX_REQUESTS_PER_MINUTE,
+                'session_timeout' => RED_LINE_SESSION_TIMEOUT
+            ]
+        ]);
+    }
+
+    public function redlineUpdate($input) {
+        $user = RedLineGuard::getCurrentUser();
+        if (!$user || !in_array($user['role'] ?? '', ['super_admin', 'admin'])) {
+            Response::forbidden('无权限修改红线配置');
+        }
+
+        $platform = trim($input['platform'] ?? '');
+        if (!in_array($platform, PlatformGuard::PLATFORM_TYPES)) {
+            Response::badRequest('无效的平台类型');
+        }
+
+        $enabled = isset($input['enabled']) ? (bool)$input['enabled'] : true;
+        $ipWhitelist = $input['ip_whitelist'] ?? [];
+        $ipWhitelistEnforce = isset($input['ip_whitelist_enforce']) ? (bool)$input['ip_whitelist_enforce'] : false;
+        $accessHours = $input['access_hours'] ?? ['start' => '00:00', 'end' => '23:59'];
+        $accessHoursEnforce = isset($input['access_hours_enforce']) ? (bool)$input['access_hours_enforce'] : false;
+        $maxRequestsPerMinute = (int)($input['max_requests_per_minute'] ?? 300);
+        $sessionTimeout = (int)($input['session_timeout'] ?? 7200);
+        $requireDeviceFingerprint = isset($input['require_device_fingerprint']) ? (bool)$input['require_device_fingerprint'] : false;
+        $deviceFingerprintThreshold = (float)($input['device_fingerprint_threshold'] ?? 0.6);
+        $allowMultiDeviceLogin = isset($input['allow_multi_device_login']) ? (bool)$input['allow_multi_device_login'] : true;
+        $sensitiveOperation2fa = isset($input['sensitive_operation_2fa']) ? (bool)$input['sensitive_operation_2fa'] : false;
+
+        if (!is_array($ipWhitelist)) {
+            Response::badRequest('IP白名单格式错误');
+        }
+
+        if (!is_array($accessHours) || !isset($accessHours['start']) || !isset($accessHours['end'])) {
+            Response::badRequest('访问时段格式错误');
+        }
+
+        if ($maxRequestsPerMinute < 1 || $maxRequestsPerMinute > 10000) {
+            Response::badRequest('请求频率限制必须在1-10000之间');
+        }
+
+        if ($sessionTimeout < 60 || $sessionTimeout > 86400 * 30) {
+            Response::badRequest('会话超时时间必须在60秒-30天之间');
+        }
+
+        if ($deviceFingerprintThreshold < 0 || $deviceFingerprintThreshold > 1) {
+            Response::badRequest('设备指纹阈值必须在0-1之间');
+        }
+
+        $platformConfigs = RED_LINE_PLATFORM_CONFIG;
+        $platformConfigs[$platform] = [
+            'enabled' => $enabled,
+            'ip_whitelist' => $ipWhitelist,
+            'ip_whitelist_enforce' => $ipWhitelistEnforce,
+            'access_hours' => $accessHours,
+            'access_hours_enforce' => $accessHoursEnforce,
+            'max_requests_per_minute' => $maxRequestsPerMinute,
+            'session_timeout' => $sessionTimeout,
+            'require_device_fingerprint' => $requireDeviceFingerprint,
+            'device_fingerprint_threshold' => $deviceFingerprintThreshold,
+            'allow_multi_device_login' => $allowMultiDeviceLogin,
+            'sensitive_operation_2fa' => $sensitiveOperation2fa
+        ];
+
+        Response::success([
+            'platform' => $platform,
+            'config' => $platformConfigs[$platform],
+            'message' => '红线配置已更新（注：当前为模拟模式，实际使用需持久化到数据库）'
+        ], '红线配置更新成功');
+    }
 }

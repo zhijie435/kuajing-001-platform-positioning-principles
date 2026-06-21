@@ -81,9 +81,9 @@ define('JWT_SECRET', 'crm-system-jwt-secret-key-2026');
 define('JWT_EXPIRE', 7200);
 
 define('PLATFORM_ENDPOINTS', [
-    'admin' => ['customer', 'user', 'report', 'system', 'license', 'audit'],
-    'sales' => ['customer', 'followup', 'opportunity', 'contract', 'dashboard'],
-    'client' => ['profile', 'contract', 'invoice', 'service']
+    'admin' => ['customer', 'user', 'report', 'system', 'license', 'audit', 'redline'],
+    'sales' => ['customer', 'followup', 'opportunity', 'contract', 'dashboard', 'audit'],
+    'client' => ['profile', 'contract', 'invoice', 'service', 'audit']
 ]);
 
 define('COMMERCIAL_FEATURE_BOUNDARY', [
