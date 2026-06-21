@@ -27,14 +27,23 @@ try {
 } catch (Exception $e) {
     $code = $e->getCode() ?: 500;
 
-    if ($code >= 4001 && $code <= 4003) {
+    if ($code >= 4001 && $code <= 4099) {
         Response::platformBlock($code, $e->getMessage(), [
             'violations' => PlatformGuard::getViolations(),
             'audit_log' => PlatformGuard::getAuditLog(),
             'platform_info' => PlatformGuard::getPlatformInfo()
         ]);
-    } elseif ($code >= 4100 && $code < 4200) {
+    } elseif ($code >= 4100 && $code <= 4199) {
         Response::commercialBlock($code, $e->getMessage(), CommercialGuard::getViolations());
+    } elseif ($code >= 4200 && $code <= 4299) {
+        Response::redLineBlock($code, $e->getMessage(), [
+            'events' => RedLineGuard::getRedLineEvents(),
+            'events_count' => count(RedLineGuard::getRedLineEvents()),
+            'status' => RedLineGuard::getStatus(),
+            'platform_config' => PlatformGuard::getCurrentPlatform()
+                ? RedLineGuard::getPlatformConfig(PlatformGuard::getCurrentPlatform())
+                : null
+        ]);
     } else {
         Response::error($code, $e->getMessage());
     }

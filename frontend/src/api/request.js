@@ -29,7 +29,7 @@ function processQueue(error, token = null) {
 
 const GUARD_BLOCK_CONFIG = {
   platform: {
-    range: [4001, 4003],
+    range: [4001, 4099],
     title: '平台定位限制',
     icon: '🚫',
     color: '#e6a23c',
@@ -38,7 +38,9 @@ const GUARD_BLOCK_CONFIG = {
     typeLabels: {
       platform_type_missing: '入口端标识缺失',
       platform_type_invalid: '入口端标识无效',
-      platform_boundary_violation: '平台定位越界'
+      platform_boundary_violation: '平台定位越界',
+      endpoint_config_missing: '平台端点配置缺失',
+      platform_endpoints_empty: '平台端点权限为空'
     },
     extractViolations: (resData) => {
       const detail = resData?.detail || {}
@@ -58,7 +60,19 @@ const GUARD_BLOCK_CONFIG = {
       feature_out_of_boundary: '功能超出版本边界',
       user_limit_exceeded: '用户数已达上限',
       client_limit_exceeded: '客户数已达上限',
-      trial_expired: '试用期已结束'
+      trial_expired: '试用期已结束',
+      license_load_failed: 'License 加载失败',
+      feature_boundary_config_missing: '商用功能边界配置缺失',
+      expire_date_invalid: 'License 过期日期无效',
+      license_store_exception: 'License 存储异常',
+      license_constants_missing: 'License 常量缺失',
+      license_fallback_to_constants: 'License 回退到默认常量',
+      license_key_empty: 'License Key 为空',
+      license_expire_empty: 'License 过期时间为空',
+      license_expire_invalid: 'License 过期时间格式错误',
+      edition_features_empty: '版本功能列表为空',
+      user_quota_config_invalid: '用户数上限配置无效',
+      client_quota_config_invalid: '客户数上限配置无效'
     },
     extractViolations: (resData) => {
       const detail = resData?.detail
@@ -68,14 +82,32 @@ const GUARD_BLOCK_CONFIG = {
     }
   },
   redline: {
-    range: [4500, 4599],
+    range: [4200, 4299],
     title: '安全红线触发',
     icon: '🚫',
     color: '#f56c6c',
     alertType: 'error',
     footer: '此为系统安全防线，请遵守红线规则',
-    typeLabels: {},
-    extractViolations: (resData) => []
+    typeLabels: {
+      identity_invalid: '身份凭证无效',
+      token_forged: 'Token 被篡改',
+      session_expired: '会话已过期',
+      device_fingerprint_mismatch: '设备指纹不匹配',
+      device_fingerprint_required: '要求设备指纹校验',
+      ip_blocked: 'IP 不在白名单',
+      access_outside_hours: '非允许访问时段',
+      rate_limit_exceeded: '请求频率超限',
+      multi_device_login: '多设备登录被拒绝',
+      platform_redline_disabled: '当前端红线校验未启用',
+      platform_missing: '入口端标识缺失',
+      config_load_failed: '红线配置加载失败',
+      session_start_failed: 'Session 启动失败',
+      token_payload_invalid: 'Token payload 格式异常'
+    },
+    extractViolations: (resData) => {
+      const events = resData?.detail?.events
+      return Array.isArray(events) ? events : []
+    }
   }
 }
 

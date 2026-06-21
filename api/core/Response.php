@@ -11,8 +11,13 @@ class Response {
         exit;
     }
 
-    public static function error($code, $message, $data = null) {
-        $httpCode = $code >= 1000 ? 400 : $code;
+    public static function error($code, $message, $data = null, $httpCode = null) {
+        if ($httpCode === null) {
+            $httpCode = $code >= 1000 ? 400 : $code;
+        }
+        if ($httpCode < 100 || $httpCode >= 600) {
+            $httpCode = 400;
+        }
         http_response_code($httpCode);
         echo json_encode([
             'code' => $code,
@@ -40,23 +45,26 @@ class Response {
     }
 
     public static function redLineBlock($code, $message, $detail = null) {
-        self::error(4500 + $code, '红线校验失败: ' . $message, [
+        $httpCode = $code >= 1000 ? 403 : $code;
+        self::error($code, '红线校验失败: ' . $message, [
             'block_type' => 'redline',
             'detail' => $detail
-        ]);
+        ], $httpCode);
     }
 
     public static function commercialBlock($code, $message, $detail = null) {
+        $httpCode = $code >= 1000 ? 402 : $code;
         self::error($code, '商用边界限制: ' . $message, [
             'block_type' => 'commercial',
             'detail' => $detail
-        ]);
+        ], $httpCode);
     }
 
     public static function platformBlock($code, $message, $detail = null) {
+        $httpCode = $code >= 1000 ? 403 : $code;
         self::error($code, '平台定位限制: ' . $message, [
             'block_type' => 'platform',
             'detail' => $detail
-        ]);
+        ], $httpCode);
     }
 }

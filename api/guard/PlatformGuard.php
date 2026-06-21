@@ -6,6 +6,7 @@ class PlatformGuard {
     const ERROR_PLATFORM_TYPE_MISSING = 4001;
     const ERROR_PLATFORM_TYPE_INVALID = 4002;
     const ERROR_PLATFORM_BOUNDARY_VIOLATION = 4003;
+    const ERROR_PLATFORM_ENDPOINT_CONFIG_MISSING = 4004;
 
     private static $currentPlatform = null;
     private static $auditLog = [];
@@ -18,9 +19,19 @@ class PlatformGuard {
     ];
 
     public static function validate() {
-        $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+        $requestUri = self::getRequestUri();
         if (self::isPublicEndpoint($requestUri)) {
             return true;
+        }
+
+        if (!self::ensureEndpointConfigReady()) {
+            self::recordViolation('endpoint_config_missing', [
+                'uri' => $requestUri
+            ]);
+            throw new Exception(
+                '平台端点边界配置缺失，请联系管理员检查系统配置',
+                self::ERROR_PLATFORM_ENDPOINT_CONFIG_MISSING
+            );
         }
 
         $platformType = isset($_SERVER[self::HEADER_PLATFORM])
@@ -38,7 +49,7 @@ class PlatformGuard {
             );
         }
 
-        if (!in_array($platformType, self::PLATFORM_TYPES)) {
+        if (!in_array($platformType, self::PLATFORM_TYPES, true)) {
             self::recordViolation('platform_type_invalid', [
                 'provided' => $platformType,
                 'allowed' => self::PLATFORM_TYPES,
@@ -53,7 +64,7 @@ class PlatformGuard {
         self::$currentPlatform = $platformType;
 
         if (!self::checkEndpointBoundary($requestUri, $platformType)) {
-            $allowed = PLATFORM_ENDPOINTS[$platformType] ?? [];
+            $allowed = self::getAllowedEndpoints($platformType);
             self::recordViolation('platform_boundary_violation', [
                 'platform' => $platformType,
                 'platform_label' => self::$platformLabels[$platformType] ?? $platformType,
@@ -80,16 +91,28 @@ class PlatformGuard {
         return true;
     }
 
+    private static function getRequestUri() {
+        return parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+    }
+
+    private static function ensureEndpointConfigReady() {
+        return defined('PLATFORM_ENDPOINTS') && is_array(PLATFORM_ENDPOINTS);
+    }
+
     private static function isPublicEndpoint($uri) {
         return (bool)preg_match('#^/api/auth/(login|platform-info|refresh)$#', $uri)
             || (bool)preg_match('#^/api/?$#', $uri);
     }
 
-    private static function checkEndpointBoundary($uri, $platformType) {
-        $allowedEndpoints = PLATFORM_ENDPOINTS[$platformType] ?? [];
-        if (empty($allowedEndpoints)) {
-            return false;
+    private static function getAllowedEndpoints($platformType) {
+        if (!self::ensureEndpointConfigReady()) {
+            return [];
         }
+        return PLATFORM_ENDPOINTS[$platformType] ?? [];
+    }
+
+    private static function checkEndpointBoundary($uri, $platformType) {
+        $allowedEndpoints = self::getAllowedEndpoints($platformType);
 
         $uri = preg_replace('#^/api/#', '', $uri);
         $uriParts = explode('/', $uri);
@@ -100,21 +123,29 @@ class PlatformGuard {
             return true;
         }
 
+        if (empty($allowedEndpoints)) {
+            self::recordViolation('platform_endpoints_empty', [
+                'platform' => $platformType,
+                'uri' => $uri
+            ]);
+            return false;
+        }
+
         if ($module === 'admin') {
             if ($platformType !== 'admin') {
                 return false;
             }
-            return $subModule === '' || in_array($subModule, $allowedEndpoints);
+            return $subModule === '' || in_array($subModule, $allowedEndpoints, true);
         }
 
         if ($module === 'client') {
             if ($platformType !== 'client') {
                 return false;
             }
-            return $subModule === '' || in_array($subModule, $allowedEndpoints);
+            return $subModule === '' || in_array($subModule, $allowedEndpoints, true);
         }
 
-        return in_array($module, $allowedEndpoints) || empty($module);
+        return in_array($module, $allowedEndpoints, true) || empty($module);
     }
 
     public static function getCurrentPlatform() {
@@ -123,13 +154,13 @@ class PlatformGuard {
 
     public static function getPlatformInfo() {
         return [
-            'name' => PLATFORM_NAME,
-            'version' => PLATFORM_VERSION,
-            'type' => PLATFORM_TYPE,
+            'name' => defined('PLATFORM_NAME') ? PLATFORM_NAME : 'Unknown',
+            'version' => defined('PLATFORM_VERSION') ? PLATFORM_VERSION : '0.0.0',
+            'type' => defined('PLATFORM_TYPE') ? PLATFORM_TYPE : 'unknown',
             'platforms' => self::PLATFORM_TYPES,
             'platform_labels' => self::$platformLabels,
             'current' => self::$currentPlatform,
-            'endpoints' => PLATFORM_ENDPOINTS
+            'endpoints' => self::ensureEndpointConfigReady() ? PLATFORM_ENDPOINTS : []
         ];
     }
 
@@ -150,7 +181,7 @@ class PlatformGuard {
             'type' => $type,
             'data' => $data,
             'time' => date('Y-m-d H:i:s'),
-            'uri' => parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)
+            'uri' => self::getRequestUri()
         ];
     }
 
