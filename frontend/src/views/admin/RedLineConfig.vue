@@ -160,13 +160,70 @@
         </a-form>
       </template>
     </a-modal>
+
+    <a-modal
+      v-model:open="rollbackVisible"
+      title="⚠️ 配置提交失败，已自动回滚"
+      :width="600"
+      :footer="null"
+      :closable="false"
+      :mask-closable="false"
+      destroyOnClose
+    >
+      <div class="rollback-content">
+        <a-alert
+          type="error"
+          show-icon
+          :message="rollbackError?.error_detail || '配置验证失败'"
+          :description="rollbackError?.suggestion || '系统已自动回滚到之前的配置'"
+          style="margin-bottom: 16px"
+        />
+
+        <a-descriptions bordered size="small" :column="1">
+          <a-descriptions-item label="平台">
+            <a-tag :color="currentPlatformColor">{{ currentPlatformLabel }}</a-tag>
+          </a-descriptions-item>
+          <a-descriptions-item label="回滚后配置">
+            <div v-if="rollbackError?.rollback_config" class="config-preview">
+              <div class="config-line">
+                <span class="config-label">状态：</span>
+                <a-badge
+                  :status="rollbackError.rollback_config.enabled ? 'success' : 'error'"
+                  :text="rollbackError.rollback_config.enabled ? '已启用' : '已禁用'"
+                />
+              </div>
+              <div class="config-line">
+                <span class="config-label">IP白名单：</span>
+                <span>{{ rollbackError.rollback_config.ip_whitelist?.length || 0 }} 个规则</span>
+              </div>
+              <div class="config-line">
+                <span class="config-label">访问时段：</span>
+                <span>{{ rollbackError.rollback_config.access_hours?.start }} - {{ rollbackError.rollback_config.access_hours?.end }}</span>
+              </div>
+              <div class="config-line">
+                <span class="config-label">请求限流：</span>
+                <span>{{ rollbackError.rollback_config.max_requests_per_minute }} 次/分钟</span>
+              </div>
+            </div>
+          </a-descriptions-item>
+        </a-descriptions>
+
+        <div class="rollback-actions">
+          <a-button @click="closeRollback">关闭</a-button>
+          <a-button v-if="rollbackError?.retry_available" type="primary" @click="retrySubmit">
+            <ReloadOutlined />
+            重新提交
+          </a-button>
+        </div>
+      </div>
+    </a-modal>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
 import { message } from 'ant-design-vue'
-import { EditOutlined } from '@ant-design/icons-vue'
+import { EditOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import dayjs from 'dayjs'
 import { getRedlineConfig, updateRedlineConfig } from '@/api/audit'
 
@@ -186,9 +243,18 @@ const editForm = ref(null)
 const accessHoursRange = ref(null)
 const confirmLoading = ref(false)
 
+const rollbackVisible = ref(false)
+const rollbackError = ref(null)
+const pendingFormData = ref(null)
+
 const currentPlatformLabel = computed(() => {
   const p = platforms.find(p => p.value === currentPlatform.value)
   return p ? p.label : ''
+})
+
+const currentPlatformColor = computed(() => {
+  const p = platforms.find(p => p.value === currentPlatform.value)
+  return p ? p.color : '#1890ff'
 })
 
 const formatSeconds = (seconds) => {
@@ -257,14 +323,54 @@ const handleSave = async () => {
     }
   }
 
+  pendingFormData.value = formData
   confirmLoading.value = true
   try {
     await updateRedlineConfig(formData)
     message.success('配置更新成功')
     editVisible.value = false
     fetchConfig()
+    pendingFormData.value = null
   } catch (e) {
-    message.error('保存失败')
+    const errorData = e?.response?.data || e?.data || null
+    if (errorData && errorData.data && errorData.data.rollback) {
+      rollbackError.value = errorData.data
+      editVisible.value = false
+      rollbackVisible.value = true
+    } else {
+      message.error(errorData?.message || '保存失败')
+    }
+  } finally {
+    confirmLoading.value = false
+  }
+}
+
+const closeRollback = () => {
+  rollbackVisible.value = false
+  rollbackError.value = null
+  pendingFormData.value = null
+  fetchConfig()
+}
+
+const retrySubmit = async () => {
+  if (!pendingFormData.value) return
+
+  confirmLoading.value = true
+  rollbackVisible.value = false
+  try {
+    await updateRedlineConfig(pendingFormData.value)
+    message.success('配置更新成功')
+    rollbackError.value = null
+    pendingFormData.value = null
+    fetchConfig()
+  } catch (e) {
+    const errorData = e?.response?.data || e?.data || null
+    if (errorData && errorData.data && errorData.data.rollback) {
+      rollbackError.value = errorData.data
+      rollbackVisible.value = true
+    } else {
+      message.error(errorData?.message || '保存失败')
+    }
   } finally {
     confirmLoading.value = false
   }
@@ -287,6 +393,29 @@ onMounted(() => {
 
   .config-summary {
     margin-top: 16px;
+  }
+}
+
+.rollback-content {
+  .config-preview {
+    .config-line {
+      padding: 4px 0;
+      font-size: 13px;
+
+      .config-label {
+        color: #909399;
+        margin-right: 8px;
+      }
+    }
+  }
+
+  .rollback-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #f0f0f0;
   }
 }
 </style>

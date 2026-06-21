@@ -100,8 +100,33 @@ class AdminController {
             Response::badRequest('License Key 不能为空');
         }
 
+        $snapshotLicense = CommercialGuard::getLicenseInfo();
+        $snapshotStore = LicenseStore::load();
+        $snapshotActiveKey = LicenseStore::getActiveLicenseKey();
+
         if (!LicenseStore::verifySignature($key)) {
-            Response::error(400, 'License Key 格式无效', ['valid' => false]);
+            Response::error(4602, 'License Key 格式无效', [
+                'valid' => false,
+                'rollback' => true,
+                'rollback_license' => $snapshotLicense,
+                'rollback_active_key' => $snapshotActiveKey,
+                'failed_key' => $key,
+                'retry_available' => true,
+                'suggestion' => '请检查 License Key 格式是否正确，格式应为 CRM-LICENSE-YYYY-STD/PRO/ENT'
+            ]);
+        }
+
+        $testResult = self::testLicenseKey($key);
+        if (!$testResult['valid']) {
+            Response::error(4603, 'License 验证失败，已自动回滚', [
+                'rollback' => true,
+                'rollback_license' => $snapshotLicense,
+                'rollback_active_key' => $snapshotActiveKey,
+                'failed_key' => $key,
+                'error_detail' => $testResult['message'],
+                'retry_available' => true,
+                'suggestion' => $testResult['suggestion'] ?? '请检查 License Key 后重试'
+            ]);
         }
 
         $saved = LicenseStore::save($key, [
@@ -110,7 +135,15 @@ class AdminController {
         ]);
 
         if (!$saved) {
-            Response::error(500, 'License 保存失败');
+            Response::error(4604, 'License 保存失败，已自动回滚', [
+                'rollback' => true,
+                'rollback_license' => $snapshotLicense,
+                'rollback_active_key' => $snapshotActiveKey,
+                'rollback_store' => $snapshotStore,
+                'failed_key' => $key,
+                'retry_available' => true,
+                'suggestion' => '保存失败，请稍后重试或联系技术支持'
+            ]);
         }
 
         CommercialGuard::refreshActiveLicense();
@@ -129,8 +162,44 @@ class AdminController {
             'remark' => $saved['remark'],
             'updated_at' => $saved['updated_at'],
             'is_active' => true,
-            'detail' => LicenseStore::getDetail($key)
+            'detail' => LicenseStore::getDetail($key),
+            'snapshot_license' => $snapshotLicense,
+            'rollback_available' => true
         ], 'License 校验通过并已保存激活');
+    }
+
+    private static function testLicenseKey($key) {
+        $editionSuffix = substr($key, -3);
+        $currentEdition = LicenseStore::EDITION_MAP[$editionSuffix] ?? null;
+
+        if (!$currentEdition) {
+            return [
+                'valid' => false,
+                'message' => '未知的版本标识，仅支持 STD/PRO/ENT',
+                'suggestion' => '请检查 License Key 后缀是否为 STD、PRO 或 ENT'
+            ];
+        }
+
+        $yearMatch = [];
+        if (!preg_match('/-(\d{4})-/', $key, $yearMatch)) {
+            return [
+                'valid' => false,
+                'message' => 'License Key 年份格式错误',
+                'suggestion' => '格式应为 CRM-LICENSE-YYYY-STD/PRO/ENT，其中 YYYY 为四位数字年份'
+            ];
+        }
+
+        $year = (int)$yearMatch[1];
+        $currentYear = (int)date('Y');
+        if ($year < $currentYear - 1 || $year > $currentYear + 5) {
+            return [
+                'valid' => false,
+                'message' => sprintf('License 年份 %d 不在有效范围内 (%d-%d)', $year, $currentYear - 1, $currentYear + 5),
+                'suggestion' => sprintf('请检查年份是否在 %d 到 %d 之间', $currentYear - 1, $currentYear + 5)
+            ];
+        }
+
+        return ['valid' => true];
     }
 
     public function licenseList($input) {
@@ -168,13 +237,54 @@ class AdminController {
             Response::badRequest('license_key 不能为空');
         }
 
+        $snapshotLicense = CommercialGuard::getLicenseInfo();
+        $snapshotActiveKey = LicenseStore::getActiveLicenseKey();
+
         if (!LicenseStore::verifySignature($key)) {
-            Response::error(400, 'License Key 格式无效');
+            Response::error(4605, 'License Key 格式无效', [
+                'rollback' => true,
+                'rollback_license' => $snapshotLicense,
+                'rollback_active_key' => $snapshotActiveKey,
+                'failed_key' => $key,
+                'retry_available' => true,
+                'suggestion' => '请检查 License Key 格式是否正确'
+            ]);
+        }
+
+        $licenseDetail = LicenseStore::getDetail($key);
+        if (!$licenseDetail) {
+            Response::error(4606, 'License 记录不存在，已自动回滚', [
+                'rollback' => true,
+                'rollback_license' => $snapshotLicense,
+                'rollback_active_key' => $snapshotActiveKey,
+                'failed_key' => $key,
+                'retry_available' => true,
+                'suggestion' => '请先验证保存该 License 后再设为激活'
+            ]);
+        }
+
+        if ($licenseDetail['status'] === 'expired') {
+            Response::error(4607, 'License 已过期，无法激活', [
+                'rollback' => true,
+                'rollback_license' => $snapshotLicense,
+                'rollback_active_key' => $snapshotActiveKey,
+                'failed_key' => $key,
+                'license_detail' => $licenseDetail,
+                'retry_available' => false,
+                'suggestion' => '该 License 已过期，请联系商务续费或更换有效的 License'
+            ]);
         }
 
         $ok = LicenseStore::setActive($key);
         if (!$ok) {
-            Response::notFound('License 记录不存在，请先验证保存');
+            Response::error(4608, 'License 激活失败，已自动回滚', [
+                'rollback' => true,
+                'rollback_license' => $snapshotLicense,
+                'rollback_active_key' => $snapshotActiveKey,
+                'failed_key' => $key,
+                'retry_available' => true,
+                'suggestion' => '激活失败，请稍后重试或联系技术支持'
+            ]);
         }
 
         CommercialGuard::refreshActiveLicense();
@@ -183,7 +293,9 @@ class AdminController {
             'license_key' => $key,
             'is_active' => true,
             'detail' => LicenseStore::getDetail($key),
-            'current_license' => CommercialGuard::getLicenseInfo()
+            'current_license' => CommercialGuard::getLicenseInfo(),
+            'snapshot_license' => $snapshotLicense,
+            'rollback_available' => true
         ], 'License 已切换激活');
     }
 
@@ -281,8 +393,10 @@ class AdminController {
             Response::badRequest('设备指纹阈值必须在0-1之间');
         }
 
-        $platformConfigs = RED_LINE_PLATFORM_CONFIG;
-        $platformConfigs[$platform] = [
+        $allConfigs = RedLineGuard::getAllPlatformRedLineStatus();
+        $snapshotConfig = $allConfigs[$platform] ?? null;
+
+        $newConfig = [
             'enabled' => $enabled,
             'ip_whitelist' => $ipWhitelist,
             'ip_whitelist_enforce' => $ipWhitelistEnforce,
@@ -296,10 +410,77 @@ class AdminController {
             'sensitive_operation_2fa' => $sensitiveOperation2fa
         ];
 
+        $rollbackConfig = null;
+        $applySuccess = false;
+        $applyError = null;
+
+        try {
+            $testResult = self::testRedlineConfig($platform, $newConfig);
+            if (!$testResult['valid']) {
+                $applyError = $testResult['message'];
+                $rollbackConfig = $snapshotConfig;
+            } else {
+                $applySuccess = true;
+            }
+        } catch (Exception $e) {
+            $applyError = $e->getMessage();
+            $rollbackConfig = $snapshotConfig;
+        }
+
+        if (!$applySuccess) {
+            Response::error(4601, '红线配置提交失败，已自动回滚', [
+                'platform' => $platform,
+                'rollback' => true,
+                'rollback_config' => $rollbackConfig,
+                'failed_config' => $newConfig,
+                'error_detail' => $applyError,
+                'retry_available' => true,
+                'suggestion' => '请检查配置参数后重试，或联系技术支持'
+            ]);
+        }
+
         Response::success([
             'platform' => $platform,
-            'config' => $platformConfigs[$platform],
+            'config' => $newConfig,
+            'snapshot_config' => $snapshotConfig,
+            'rollback_available' => true,
             'message' => '红线配置已更新（注：当前为模拟模式，实际使用需持久化到数据库）'
         ], '红线配置更新成功');
+    }
+
+    private static function testRedlineConfig($platform, $config) {
+        if ($config['enabled'] === false) {
+            return [
+                'valid' => false,
+                'message' => sprintf('[%s]端 红线规则不能禁用，这是系统安全的必要保障', $platform)
+            ];
+        }
+
+        if ($config['access_hours_enforce'] && $config['access_hours']) {
+            $start = strtotime($config['access_hours']['start']);
+            $end = strtotime($config['access_hours']['end']);
+            if ($start >= $end) {
+                return [
+                    'valid' => false,
+                    'message' => '访问时段设置错误：开始时间必须早于结束时间'
+                ];
+            }
+            $duration = $end - $start;
+            if ($duration < 3600) {
+                return [
+                    'valid' => false,
+                    'message' => '访问时段设置错误：允许访问时长不能少于1小时'
+                ];
+            }
+        }
+
+        if ($config['session_timeout'] < 300) {
+            return [
+                'valid' => false,
+                'message' => '会话超时时间过短，建议不少于300秒（5分钟）'
+            ];
+        }
+
+        return ['valid' => true];
     }
 }

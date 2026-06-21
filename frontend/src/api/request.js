@@ -147,6 +147,15 @@ service.interceptors.response.use(
       return Promise.reject(new Error(msg))
     }
 
+    if (code >= 4600 && code < 4700) {
+      return Promise.reject({
+        message: msg,
+        code: code,
+        data: res.data,
+        response: { data: res }
+      })
+    }
+
     if (code === 4205) {
       ElMessage.warning(msg)
       return Promise.reject(new Error(msg))
@@ -158,6 +167,16 @@ service.interceptors.response.use(
   error => {
     const status = error.response?.status
     const data = error.response?.data
+    const code = data?.code
+
+    if (code && code >= 4600 && code < 4700 && data?.data?.rollback) {
+      return Promise.reject({
+        message: data.message,
+        code: code,
+        data: data.data,
+        response: { data: data }
+      })
+    }
 
     if (status === 401 || status === 4201) {
       const userStore = useUserStore()

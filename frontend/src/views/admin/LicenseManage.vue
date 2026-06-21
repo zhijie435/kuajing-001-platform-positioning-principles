@@ -162,6 +162,61 @@
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="rollbackVisible"
+      title="⚠️ License 操作失败，已自动回滚"
+      width="560px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      :show-close="false"
+    >
+      <el-alert
+        :title="rollbackError?.error_detail || rollbackError?.message || '操作失败'"
+        type="error"
+        :description="rollbackError?.suggestion || '系统已自动回滚到之前的 License 配置'"
+        show-icon
+        style="margin-bottom: 16px"
+      />
+
+      <el-descriptions v-if="rollbackError?.rollback_license" :column="1" border size="small">
+        <el-descriptions-item label="回滚后版本">
+          <el-tag :type="editionCodeTagType(rollbackError.rollback_license.edition_code)" size="small">
+            {{ rollbackError.rollback_license.edition }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="License Key">
+          <span style="font-family: monospace">{{ rollbackError.rollback_license.key }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="到期日期">
+          <span :style="rollbackError.rollback_license.days_left <= 30 ? 'color:#f56c6c' : ''">
+            {{ rollbackError.rollback_license.expire }}
+            <span v-if="rollbackError.rollback_license.days_left !== undefined">
+              (剩余 {{ rollbackError.rollback_license.days_left }} 天)
+            </span>
+          </span>
+        </el-descriptions-item>
+        <el-descriptions-item label="用户配额">
+          {{ rollbackError.rollback_license.max_users }} 人
+        </el-descriptions-item>
+        <el-descriptions-item label="客户配额">
+          {{ (rollbackError.rollback_license.max_clients || 0).toLocaleString() }} 人
+        </el-descriptions-item>
+      </el-descriptions>
+
+      <template #footer>
+        <el-button @click="closeRollback">关闭</el-button>
+        <el-button
+          v-if="rollbackError?.retry_available"
+          type="primary"
+          @click="retryOperation"
+          :loading="retrying"
+        >
+          <el-icon><Refresh /></el-icon>
+          重新提交
+        </el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="detailVisible" title="License 详情" width="560px">
       <el-descriptions v-if="detail" :column="1" border>
         <el-descriptions-item label="License Key">
@@ -196,7 +251,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Key, Medal } from '@element-plus/icons-vue'
+import { Key, Medal, Refresh } from '@element-plus/icons-vue'
 import {
   getLicenseInfo, verifyLicense, getLicenseList, getLicenseDetail, activateLicense
 } from '@/api'
@@ -254,6 +309,11 @@ const verifyForm = reactive({ key: '', remark: '' })
 const detailVisible = ref(false)
 const detail = ref(null)
 
+const rollbackVisible = ref(false)
+const rollbackError = ref(null)
+const retrying = ref(false)
+const pendingOperation = ref(null)
+
 function showVerifyDialog() {
   verifyForm.key = ''
   verifyForm.remark = ''
@@ -265,13 +325,27 @@ async function doVerify() {
     ElMessage.warning('请输入 License Key')
     return
   }
+  pendingOperation.value = {
+    type: 'verify',
+    data: { license_key: verifyForm.key, remark: verifyForm.remark }
+  }
   verifying.value = true
   try {
     const res = await verifyLicense({ license_key: verifyForm.key, remark: verifyForm.remark })
     if (res.code === 0) {
       ElMessage.success('License 验证通过并已保存激活，版本：' + res.data.edition)
       dialogVisible.value = false
+      pendingOperation.value = null
       await Promise.all([loadLicense(), loadList()])
+    }
+  } catch (e) {
+    const errorData = e?.response?.data || e?.data || null
+    if (errorData && errorData.data && errorData.data.rollback) {
+      rollbackError.value = errorData.data
+      dialogVisible.value = false
+      rollbackVisible.value = true
+    } else {
+      ElMessage.error(errorData?.message || '验证失败')
     }
   } finally {
     verifying.value = false
@@ -322,13 +396,64 @@ async function activate(row) {
       '切换激活确认',
       { type: 'warning' }
     )
+    pendingOperation.value = {
+      type: 'activate',
+      data: { license_key: row.license_key }
+    }
     const res = await activateLicense({ license_key: row.license_key })
     if (res.code === 0) {
       ElMessage.success('已切换激活')
+      pendingOperation.value = null
       await Promise.all([loadLicense(), loadList()])
     }
   } catch (e) {
-    if (e !== 'cancel') console.warn(e)
+    if (e === 'cancel') return
+    const errorData = e?.response?.data || e?.data || null
+    if (errorData && errorData.data && errorData.data.rollback) {
+      rollbackError.value = errorData.data
+      rollbackVisible.value = true
+    } else {
+      ElMessage.error(errorData?.message || '激活失败')
+    }
+  }
+}
+
+function closeRollback() {
+  rollbackVisible.value = false
+  rollbackError.value = null
+  pendingOperation.value = null
+  Promise.all([loadLicense(), loadList()])
+}
+
+async function retryOperation() {
+  if (!pendingOperation.value) return
+
+  retrying.value = true
+  rollbackVisible.value = false
+  try {
+    let res
+    if (pendingOperation.value.type === 'verify') {
+      res = await verifyLicense(pendingOperation.value.data)
+    } else if (pendingOperation.value.type === 'activate') {
+      res = await activateLicense(pendingOperation.value.data)
+    }
+
+    if (res && res.code === 0) {
+      ElMessage.success('操作成功')
+      rollbackError.value = null
+      pendingOperation.value = null
+      await Promise.all([loadLicense(), loadList()])
+    }
+  } catch (e) {
+    const errorData = e?.response?.data || e?.data || null
+    if (errorData && errorData.data && errorData.data.rollback) {
+      rollbackError.value = errorData.data
+      rollbackVisible.value = true
+    } else {
+      ElMessage.error(errorData?.message || '操作失败')
+    }
+  } finally {
+    retrying.value = false
   }
 }
 
