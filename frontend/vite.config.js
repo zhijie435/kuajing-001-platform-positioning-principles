@@ -5,6 +5,10 @@ import path from 'path'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const platform = env.VITE_PLATFORM || 'sales'
+  const apiBase = env.VITE_API_BASE || '/api'
+  const apiTarget = env.VITE_API_TARGET || 'http://localhost:8000'
+  const defaultPort = platform === 'admin' ? 8081 : (platform === 'client' ? 8082 : 8080)
+  const devPort = parseInt(env.VITE_DEV_PORT || String(defaultPort), 10)
 
   const entryMap = {
     admin: 'admin.html',
@@ -25,11 +29,11 @@ export default defineConfig(({ mode }) => {
  __PLATFORM__: JSON.stringify(platform)
     },
     server: {
- port: platform === 'admin' ? 8081 : (platform === 'client' ? 8082 : 8080),
+ port: devPort,
  host: '0.0.0.0',
  proxy: {
- '/api': {
- target: 'http://localhost:8000',
+ [apiBase]: {
+ target: apiTarget,
  changeOrigin: true
  }
  }
