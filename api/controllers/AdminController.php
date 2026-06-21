@@ -56,7 +56,11 @@ class AdminController {
         try {
             CommercialGuard::validateUserQuota(6);
         } catch (Exception $e) {
-            Response::forbidden($e->getMessage());
+            Response::commercialBlock(
+                $e->getCode() ?: CommercialGuard::ERROR_USER_LIMIT_EXCEEDED,
+                $e->getMessage(),
+                CommercialGuard::getViolations()
+            );
         }
 
         Response::success([

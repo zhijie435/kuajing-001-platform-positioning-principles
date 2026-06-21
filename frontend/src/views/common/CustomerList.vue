@@ -192,14 +192,17 @@ async function submitForm() {
     ElMessage.warning('客户姓名和公司名称不能为空')
     return
   }
-  if (form.id) {
-    await updateCustomer(form)
-  } else {
-    await createCustomer(form)
+  try {
+    if (form.id) {
+      await updateCustomer(form)
+    } else {
+      await createCustomer(form)
+    }
+    ElMessage.success('保存成功')
+    dialogVisible.value = false
+    loadList()
+  } catch (e) {
   }
-  ElMessage.success('保存成功')
-  dialogVisible.value = false
-  loadList()
 }
 
 async function deleteCustomer(row) {

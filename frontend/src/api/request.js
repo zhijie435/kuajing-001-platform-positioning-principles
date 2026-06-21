@@ -87,12 +87,38 @@ service.interceptors.response.use(
       return Promise.reject(new Error(msg))
     }
 
-    if (code === 403 || code >= 4100 && code < 4200) {
+    if (code === 403) {
+      ElMessage.error({ message: '⛔ 无权限访问: ' + msg, duration: 5000 })
+      return Promise.reject(new Error(msg))
+    }
+
+    if (code >= 4100 && code < 4200) {
+      const violations = Array.isArray(res.data?.detail) ? res.data.detail : []
+      const violationHtml = violations.length
+        ? violations
+            .map(v => {
+              const typeLabel = {
+                invalid_license: 'License 签名无效',
+                license_expired: 'License 已过期',
+                feature_out_of_boundary: '功能超出版本边界',
+                user_limit_exceeded: '用户数已达上限',
+                client_limit_exceeded: '客户数已达上限',
+                trial_expired: '试用期已结束'
+              }[v.type] || v.type
+              const dataStr = v.data && Object.keys(v.data).length
+                ? Object.entries(v.data).map(([k, val]) => `${k}: ${val}`).join(' / ')
+                : ''
+              return `<div style="font-size:12px;color:#909399;margin-top:4px;padding-left:12px">· ${typeLabel}${dataStr ? `（${dataStr}）` : ''}</div>`
+            })
+            .join('')
+        : ''
+
       ElMessageBox.alert(
         `<div style="line-height:1.8">
-          <div style="font-weight:bold;margin-bottom:8px;color:#f56c6c">⚠️ 商用边界限制</div>
+          <div style="font-weight:bold;margin-bottom:8px;color:#e6a23c">⚠️ 商用边界限制</div>
           <div>${msg}</div>
-          <div style="margin-top:8px;font-size:12px;color:#909399">如需开通请联系商务部门</div>
+          ${violationHtml}
+          <div style="margin-top:8px;font-size:12px;color:#909399">如需开通请联系商务部门，错误码：${code}</div>
         </div>`,
         '访问受限',
         {

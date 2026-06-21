@@ -163,14 +163,17 @@ async function submitFollowup() {
     ElMessage.warning('请输入跟进内容')
     return
   }
-  await createFollowup({
-    customer_id: customerId,
-    customer_name: customer.value.name,
-    ...followupForm
-  })
-  ElMessage.success('跟进已保存')
-  followupVisible.value = false
-  loadDetail()
+  try {
+    await createFollowup({
+      customer_id: customerId,
+      customer_name: customer.value.name,
+      ...followupForm
+    })
+    ElMessage.success('跟进已保存')
+    followupVisible.value = false
+    loadDetail()
+  } catch (e) {
+  }
 }
 
 onMounted(loadDetail)

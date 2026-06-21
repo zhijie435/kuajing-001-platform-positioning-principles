@@ -196,14 +196,17 @@ async function submitForm() {
     ElMessage.warning('请填写完整商机信息')
     return
   }
-  if (form.id) {
-    await updateOpportunity(form)
-  } else {
-    await createOpportunity(form)
+  try {
+    if (form.id) {
+      await updateOpportunity(form)
+    } else {
+      await createOpportunity(form)
+    }
+    ElMessage.success('保存成功')
+    dialogVisible.value = false
+    loadList()
+  } catch (e) {
   }
-  ElMessage.success('保存成功')
-  dialogVisible.value = false
-  loadList()
 }
 
 onMounted(loadList)

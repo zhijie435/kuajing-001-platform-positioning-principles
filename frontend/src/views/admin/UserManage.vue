@@ -137,10 +137,13 @@ async function submitForm() {
     ElMessage.warning('请填写完整信息')
     return
   }
-  await createAdminUser(form)
-  ElMessage.success('用户创建成功')
-  dialogVisible.value = false
-  loadList()
+  try {
+    await createAdminUser(form)
+    ElMessage.success('用户创建成功')
+    dialogVisible.value = false
+    loadList()
+  } catch (e) {
+  }
 }
 
 onMounted(loadList)

@@ -1,0 +1,22 @@
+{
+    "active_key": "CRM-LICENSE-2026-STD",
+    "records": {
+        "CRM-LICENSE-2026-STD": {
+            "license_key": "CRM-LICENSE-2026-STD",
+            "edition_code": "standard",
+            "edition_label": "标准版",
+            "expire": "2027-06-21",
+            "issued_at": "2025-06-21",
+            "max_users": 100,
+            "max_clients": 10000,
+            "features": [
+                "customer_basic",
+                "followup_basic",
+                "dashboard_basic"
+            ],
+            "remark": "初始内置 License",
+            "updated_at": "2026-06-21 16:56:42",
+            "created_at": "2026-06-21 16:56:42"
+        }
+    }
+}

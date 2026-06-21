@@ -76,7 +76,11 @@ class CustomerController {
         try {
             CommercialGuard::validateClientQuota(count($this->mockData));
         } catch (Exception $e) {
-            Response::forbidden($e->getMessage());
+            Response::commercialBlock(
+                $e->getCode() ?: CommercialGuard::ERROR_CLIENT_LIMIT_EXCEEDED,
+                $e->getMessage(),
+                CommercialGuard::getViolations()
+            );
         }
 
         $user = RedLineGuard::getCurrentUser();

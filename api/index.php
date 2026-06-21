@@ -25,5 +25,10 @@ try {
     $router = new Router();
     $router->dispatch();
 } catch (Exception $e) {
-    Response::error($e->getCode() ?: 500, $e->getMessage());
+    $code = $e->getCode() ?: 500;
+    if ($code >= 4100 && $code < 4200) {
+        Response::commercialBlock($code, $e->getMessage(), CommercialGuard::getViolations());
+    } else {
+        Response::error($code, $e->getMessage());
+    }
 }

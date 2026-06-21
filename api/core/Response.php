@@ -45,4 +45,11 @@ class Response {
             'detail' => $detail
         ]);
     }
+
+    public static function commercialBlock($code, $message, $detail = null) {
+        self::error($code, '商用边界限制: ' . $message, [
+            'block_type' => 'commercial',
+            'detail' => $detail
+        ]);
+    }
 }
