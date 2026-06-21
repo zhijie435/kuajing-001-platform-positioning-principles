@@ -2,15 +2,24 @@
   <div class="page-container">
     <div class="page-header">
       <h2>跟进记录</h2>
-      <el-button type="primary" @click="showCreateDialog">
-        <el-icon><Plus /></el-icon>新增跟进
-      </el-button>
+      <div style="display:flex;align-items:center;gap:12px">
+        <el-tag v-if="pendingCount > 0" type="warning" effect="dark">待审核 {{ pendingCount }} 条</el-tag>
+        <el-button type="primary" @click="showCreateDialog">
+          <el-icon><Plus /></el-icon>新增跟进
+        </el-button>
+      </div>
     </div>
 
     <el-card shadow="never">
       <div class="filter-bar">
         <el-select v-model="filter.type" placeholder="跟进类型" clearable style="width:160px">
           <el-option v-for="opt in typeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </el-select>
+        <el-select v-model="filter.review_status" placeholder="审核状态" clearable style="width:140px">
+          <el-option label="未提交" value="none" />
+          <el-option label="待审核" value="pending" />
+          <el-option label="已通过" value="approved" />
+          <el-option label="已驳回" value="rejected" />
         </el-select>
       </div>
 
@@ -27,11 +36,34 @@
               <el-tag :type="typeColor(item.type)" effect="light">{{ item.type_label }}</el-tag>
               <span class="customer-name">客户：{{ item.customer_name }}</span>
               <span class="operator">跟进人：{{ item.operator_name }}</span>
+              <span class="review-tag">
+                <el-tag v-if="!item.review_status || item.review_status === 'none'" type="info" size="small">未提交</el-tag>
+                <el-tag v-else-if="item.review_status === 'pending'" type="warning" effect="dark" size="small">待审核</el-tag>
+                <el-tag v-else-if="item.review_status === 'approved'" type="success" effect="dark" size="small">已通过</el-tag>
+                <el-tag v-else-if="item.review_status === 'rejected'" type="danger" effect="dark" size="small">已驳回</el-tag>
+                <el-tag v-else type="info" size="small">已撤销</el-tag>
+              </span>
             </div>
             <div class="card-content">{{ item.content }}</div>
             <div v-if="item.next_followup" class="card-footer">
               <el-icon><Clock /></el-icon>
               下次跟进：{{ item.next_followup }}
+            </div>
+            <div v-if="item.type === 'sign' || item.review_status" class="card-actions">
+              <el-button
+                v-if="!item.review_status || item.review_status === 'none' || item.review_status === 'rejected'"
+                size="small"
+                type="warning"
+                link
+                @click="submitReview(item)"
+              >提交审核</el-button>
+              <el-button
+                v-if="item.review_status === 'pending'"
+                size="small"
+                type="info"
+                link
+                @click="cancelReview(item)"
+              >撤销审核</el-button>
             </div>
           </el-card>
         </el-timeline-item>
@@ -43,6 +75,7 @@
         v-model:page-size="pageSize"
         :total="total"
         layout="total, prev, pager, next"
+        @change="loadList"
       />
     </el-card>
 
@@ -72,18 +105,24 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, reactive, onMounted, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Clock } from '@element-plus/icons-vue'
-import { getFollowupList, createFollowup } from '@/api'
+import {
+  getFollowupList,
+  createFollowup,
+  submitFollowupReview,
+  cancelFollowupReview
+} from '@/api'
 
 const loading = ref(false)
 const list = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
+const pendingCount = ref(0)
 
-const filter = reactive({ type: '' })
+const filter = reactive({ type: '', review_status: '' })
 const typeOptions = [
   { value: 'call', label: '电话沟通' },
   { value: 'meeting', label: '上门拜访' },
@@ -112,10 +151,45 @@ async function loadList() {
     if (res.code === 0) {
       list.value = res.data.list
       total.value = res.data.total
+      pendingCount.value = res.data.pending_count || 0
     }
   } finally {
     loading.value = false
   }
+}
+
+async function submitReview(item) {
+  try {
+    await ElMessageBox.confirm(
+      `确认提交这条【${item.type_label}】跟进记录审核吗？合同签约等敏感类型需审核。`,
+      '提交审核',
+      { type: 'warning' }
+    )
+  } catch { return }
+  try {
+    const res = await submitFollowupReview({ id: item.id })
+    if (res.code === 0) {
+      ElMessage.success('已提交审核')
+      loadList()
+    } else {
+      ElMessage.error(res.msg || '提交失败')
+    }
+  } catch (e) {}
+}
+
+async function cancelReview(item) {
+  try {
+    await ElMessageBox.confirm('确认撤销这条跟进记录的审核申请吗？', '撤销审核', { type: 'warning' })
+  } catch { return }
+  try {
+    const res = await cancelFollowupReview({ id: item.id })
+    if (res.code === 0) {
+      ElMessage.success('已撤销审核')
+      loadList()
+    } else {
+      ElMessage.error(res.msg || '操作失败')
+    }
+  } catch (e) {}
 }
 
 function showCreateDialog() {
@@ -137,6 +211,14 @@ async function submitForm() {
   loadList()
 }
 
+watch(
+  () => [filter.type, filter.review_status],
+  () => {
+    page.value = 1
+    loadList()
+  }
+)
+
 onMounted(loadList)
 </script>
 
@@ -153,8 +235,10 @@ onMounted(loadList)
     gap: 16px;
     margin-bottom: 10px;
     font-size: 13px;
+    flex-wrap: wrap;
     .customer-name { color: #409eff; }
-    .operator { margin-left: auto; color: #909399; font-size: 12px; }
+    .operator { color: #909399; font-size: 12px; }
+    .review-tag { margin-left: auto; }
   }
   .card-content {
     line-height: 1.7;
@@ -169,6 +253,12 @@ onMounted(loadList)
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+  .card-actions {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed #ebeef5;
+    text-align: right;
   }
 }
 </style>
