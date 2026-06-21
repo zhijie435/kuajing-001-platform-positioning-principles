@@ -59,14 +59,23 @@ class AuditController {
         $filtered = $this->applyPermissionFilter($this->mockAuditRecords);
 
         if ($status) {
-            $filtered = array_filter($filtered, fn($r) => $r['status'] === $status);
+            if ($status === AUDIT_STATUS_WRITEBACK_SUCCESS || $status === AUDIT_STATUS_APPROVED) {
+                $filtered = array_filter($filtered, function($r) {
+                    return $r['status'] === AUDIT_STATUS_WRITEBACK_SUCCESS || $r['status'] === AUDIT_STATUS_APPROVED;
+                });
+            } else {
+                $filtered = array_filter($filtered, fn($r) => $r['status'] === $status);
+            }
         }
+
         if ($targetType) {
             $filtered = array_filter($filtered, fn($r) => $r['target_type'] === $targetType);
         }
+
         if ($platform) {
             $filtered = array_filter($filtered, fn($r) => $r['submitter_platform'] === $platform);
         }
+
         if ($keyword) {
             $filtered = array_filter($filtered, function($r) use ($keyword) {
                 return stripos($r['audit_no'], $keyword) !== false
@@ -92,9 +101,8 @@ class AuditController {
             'filter' => $this->getPermissionFilter(),
             'status_options' => [
                 ['value' => 'pending', 'label' => '待审核'],
-                ['value' => 'approved', 'label' => '已通过'],
+                ['value' => 'writeback_success', 'label' => '已通过（回写成功）'],
                 ['value' => 'rejected', 'label' => '已驳回'],
-                ['value' => 'writeback_success', 'label' => '回写成功'],
                 ['value' => 'writeback_failed', 'label' => '回写失败']
             ],
             'target_type_options' => [
@@ -246,22 +254,20 @@ class AuditController {
         $user = RedLineGuard::getCurrentUser();
         $platform = PlatformGuard::getCurrentPlatform();
 
-        $record['status'] = AUDIT_STATUS_APPROVED;
         $record['auditor_id'] = $user['user_id'] ?? 0;
         $record['auditor_name'] = $user['username'] ?? 'admin';
         $record['audit_remark'] = $remark;
         $record['audited_at'] = date('Y-m-d H:i:s');
+        $record['writeback_attempts'] = $record['writeback_attempts'] + 1;
 
         $writebackResult = $this->executeWriteback($record);
 
         if ($writebackResult['success']) {
             $record['status'] = AUDIT_STATUS_WRITEBACK_SUCCESS;
-            $record['writeback_attempts'] = $record['writeback_attempts'] + 1;
             $record['writeback_at'] = date('Y-m-d H:i:s');
             $record['writeback_error'] = '';
         } else {
             $record['status'] = AUDIT_STATUS_WRITEBACK_FAILED;
-            $record['writeback_attempts'] = $record['writeback_attempts'] + 1;
             $record['writeback_error'] = $writebackResult['error'] ?? '回写失败';
         }
 
@@ -271,8 +277,9 @@ class AuditController {
             'id' => $id,
             'status' => $record['status'],
             'writeback_success' => $writebackResult['success'],
+            'writeback_attempts' => $record['writeback_attempts'],
             'writeback_result' => $writebackResult,
-            'message' => $writebackResult['success'] ? '审核通过，数据回写成功' : '审核通过，但数据回写失败'
+            'message' => $writebackResult['success'] ? '审核通过，数据回写成功' : '审核通过，但数据回写失败，请重试'
         ], $writebackResult['success'] ? '审核通过，数据已回写' : '审核通过，数据回写失败');
     }
 
@@ -351,16 +358,19 @@ class AuditController {
             Response::badRequest(sprintf('回写重试次数已达上限（%d次上限，请联系技术支持', DATA_WRITEBACK_RETRY_MAX));
         }
 
+        $record['writeback_attempts'] = $record['writeback_attempts'] + 1;
         $writebackResult = $this->executeWriteback($record);
 
         if ($writebackResult['success']) {
             $record['status'] = AUDIT_STATUS_WRITEBACK_SUCCESS;
-            $record['writeback_attempts'] = $record['writeback_attempts'] + 1;
             $record['writeback_at'] = date('Y-m-d H:i:s');
             $record['writeback_error'] = '';
         } else {
-            $record['writeback_attempts'] = $record['writeback_attempts'] + 1;
+            $record['status'] = AUDIT_STATUS_WRITEBACK_FAILED;
             $record['writeback_error'] = $writebackResult['error'] ?? '回写失败';
+            if ($record['writeback_attempts'] >= DATA_WRITEBACK_RETRY_MAX) {
+                $record['writeback_error'] .= '（重试次数已达上限，请联系技术支持）';
+            }
         }
 
         $this->mockAuditRecords[$idx] = $record;
@@ -370,7 +380,8 @@ class AuditController {
             'status' => $record['status'],
             'writeback_success' => $writebackResult['success'],
             'writeback_attempts' => $record['writeback_attempts'],
-            'writeback_result' => $writebackResult
+            'writeback_result' => $writebackResult,
+            'can_retry' => $record['writeback_attempts'] < DATA_WRITEBACK_RETRY_MAX && $record['status'] === AUDIT_STATUS_WRITEBACK_FAILED
         ], $writebackResult['success'] ? '数据回写成功' : '数据回写失败');
     }
 
@@ -474,9 +485,10 @@ class AuditController {
 
         $total = count($filteredRecords);
         $pending = count(array_filter($filteredRecords, fn($r) => $r['status'] === AUDIT_STATUS_PENDING));
-        $approved = count(array_filter($filteredRecords, fn($r) => $r['status'] === AUDIT_STATUS_APPROVED));
         $rejected = count(array_filter($filteredRecords, fn($r) => $r['status'] === AUDIT_STATUS_REJECTED));
-        $writebackSuccess = count(array_filter($filteredRecords, fn($r) => $r['status'] === AUDIT_STATUS_WRITEBACK_SUCCESS));
+        $writebackSuccess = count(array_filter($filteredRecords, function($r) {
+            return $r['status'] === AUDIT_STATUS_WRITEBACK_SUCCESS || $r['status'] === AUDIT_STATUS_APPROVED;
+        }));
         $writebackFailed = count(array_filter($filteredRecords, fn($r) => $r['status'] === AUDIT_STATUS_WRITEBACK_FAILED));
 
         $today = date('Y-m-d');
@@ -487,7 +499,7 @@ class AuditController {
         return [
             'total' => $total,
             'pending' => $pending,
-            'approved' => $approved,
+            'approved' => $writebackSuccess,
             'rejected' => $rejected,
             'writeback_success' => $writebackSuccess,
             'writeback_failed' => $writebackFailed,

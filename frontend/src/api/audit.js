@@ -82,10 +82,22 @@ export const updateRedlineConfig = (data) => {
 
 export const auditStatusMap = {
   pending: { label: '待审核', type: 'warning', color: '#faad14' },
-  approved: { label: '已通过', type: 'success', color: '#52c41a' },
+  approved: { label: '已通过（回写成功）', type: 'success', color: '#52c41a' },
   rejected: { label: '已驳回', type: 'error', color: '#ff4d4f' },
-  writeback_success: { label: '回写成功', type: 'success', color: '#1890ff' },
+  writeback_success: { label: '已通过（回写成功）', type: 'success', color: '#52c41a' },
   writeback_failed: { label: '回写失败', type: 'error', color: '#ff4d4f' }
+}
+
+export const isAuditApproved = (status) => {
+  return status === 'approved' || status === 'writeback_success'
+}
+
+export const isAuditWritebackFailed = (status) => {
+  return status === 'writeback_failed'
+}
+
+export const isAuditPending = (status) => {
+  return status === 'pending'
 }
 
 export const targetTypeMap = {

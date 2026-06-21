@@ -91,7 +91,7 @@
             </a-tag>
           </template>
           <template v-else-if="column.key === 'action'">
-            <template v-if="record.status === 'pending' && isAdmin">
+            <template v-if="isAuditPending(record.status) && isAdmin">
               <a-button type="link" size="small" @click="handleApprove(record)">
                 通过
               </a-button>
@@ -99,7 +99,7 @@
                 驳回
               </a-button>
             </template>
-            <template v-else-if="record.status === 'writeback_failed' && isAdmin">
+            <template v-else-if="isAuditWritebackFailed(record.status) && isAdmin">
               <a-button type="link" size="small" @click="handleRetryWriteback(record)">
                 重试回写
               </a-button>
@@ -193,7 +193,7 @@
           </a-timeline-item>
         </a-timeline>
 
-        <template v-if="currentRecord.status === 'pending' && isAdmin">
+        <template v-if="isAuditPending(currentRecord.status) && isAdmin">
           <a-divider />
           <a-space>
             <a-button type="primary" @click="handleApprove(currentRecord)">
@@ -204,7 +204,7 @@
             </a-button>
           </a-space>
         </template>
-        <template v-else-if="currentRecord.status === 'writeback_failed' && isAdmin">
+        <template v-else-if="isAuditWritebackFailed(currentRecord.status) && isAdmin">
           <a-divider />
           <a-alert
             type="warning"
@@ -218,6 +218,15 @@
               </a-button>
             </template>
           </a-alert>
+        </template>
+        <template v-else-if="isAuditApproved(currentRecord.status)">
+          <a-divider />
+          <a-alert
+            type="success"
+            message="审核通过，数据已成功回写"
+            :description="'回写时间：' + (currentRecord.writeback_at || currentRecord.audited_at || '-')"
+            show-icon
+          />
         </template>
       </template>
     </a-modal>
@@ -260,7 +269,10 @@ import {
   auditStatusMap,
   targetTypeMap,
   operationTypeMap,
-  platformMap
+  platformMap,
+  isAuditPending,
+  isAuditWritebackFailed,
+  isAuditApproved
 } from '@/api/audit'
 import { useUserStore } from '@/store/user'
 
