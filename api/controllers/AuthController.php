@@ -6,15 +6,36 @@ require_once __DIR__ . '/../guard/CommercialGuard.php';
 
 class AuthController {
     public function platformInfo() {
+        $globalDefault = [
+            'ip_whitelist_enabled' => !empty(RED_LINE_IP_WHITELIST),
+            'access_hours' => RED_LINE_ACCESS_HOURS,
+            'rate_limit' => RED_LINE_MAX_REQUESTS_PER_MINUTE . '/分钟',
+            'session_timeout' => RED_LINE_SESSION_TIMEOUT . '秒'
+        ];
+
+        $persisted = RedLineGuard::loadPersistedConfigs();
+        $hasPersisted = $persisted && isset($persisted['configs']);
+        $allPlatforms = RedLineGuard::getAllPlatformRedLineStatus();
+        $platformSpecific = [];
+
+        foreach ($allPlatforms as $p => $cfg) {
+            $platformSpecific[$p] = [
+                'enabled' => $cfg['enabled'],
+                'ip_whitelist' => $cfg['ip_whitelist'],
+                'ip_whitelist_enforce' => $cfg['ip_whitelist_enforce'],
+                'access_hours' => $cfg['access_hours'],
+                'access_hours_enforce' => $cfg['access_hours_enforce'],
+                'max_requests_per_minute' => $cfg['max_requests_per_minute'],
+                'session_timeout' => $cfg['session_timeout']
+            ];
+        }
+
         Response::success([
             'platform' => PlatformGuard::getPlatformInfo(),
             'license' => CommercialGuard::getLicenseInfo(),
-            'redline_status' => [
-                'ip_whitelist_enabled' => !empty(RED_LINE_IP_WHITELIST),
-                'access_hours' => RED_LINE_ACCESS_HOURS,
-                'rate_limit' => RED_LINE_MAX_REQUESTS_PER_MINUTE . '/分钟',
-                'session_timeout' => RED_LINE_SESSION_TIMEOUT . '秒'
-            ]
+            'redline_status' => $globalDefault,
+            'redline_platform_config' => $platformSpecific,
+            'redline_persisted' => $hasPersisted
         ]);
     }
 

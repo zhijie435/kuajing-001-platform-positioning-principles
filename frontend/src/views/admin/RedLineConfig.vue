@@ -1,17 +1,40 @@
 <template>
   <div class="redline-config">
-    <a-card title="三端红线规则配置" :bordered="false">
+    <a-card :bordered="false">
+      <template #title>
+        <div class="card-title">
+          <span>三端红线规则配置</span>
+          <div class="title-actions">
+            <a-tag v-if="lastUpdateTime" color="blue">
+              <ClockCircleOutlined />
+              最近更新：{{ lastUpdateTime }}
+            </a-tag>
+            <a-button size="small" @click="refreshConfig" :loading="loading">
+              <ReloadOutlined />
+              刷新
+            </a-button>
+          </div>
+        </div>
+      </template>
+
       <a-alert
         type="info"
         show-icon
         class="info-alert"
         message="红线规则说明"
-        description="红线规则是系统安全的重要防线，不同入口端可配置差异化的安全策略。修改配置后立即生效，请谨慎操作。"
+        description="红线规则是系统安全的重要防线，不同入口端可配置差异化的安全策略。修改配置后立即生效，请谨慎操作。切换Tab会自动刷新最新状态。"
       />
 
-      <a-tabs v-model:activeKey="activeTab" type="card" class="config-tabs">
+      <a-tabs v-model:activeKey="activeTab" type="card" class="config-tabs" @change="onTabChange">
         <a-tab-pane v-for="platform in platforms" :key="platform.value" :tab="platform.label">
-          <a-descriptions bordered :column="2" size="small" class="config-summary" v-if="configs[platform.value]">
+          <a-descriptions
+            bordered
+            :column="2"
+            size="small"
+            class="config-summary"
+            v-if="configs[platform.value]"
+            :key="activeTab + '-' + renderTick"
+          >
             <a-descriptions-item label="状态">
               <a-badge
                 :status="configs[platform.value].enabled ? 'success' : 'error'"
@@ -56,6 +79,7 @@
       :title="'修改' + currentPlatformLabel + '红线规则'"
       :width="900"
       @ok="handleSave"
+      @cancel="onEditCancel"
       :confirm-loading="confirmLoading"
       destroyOnClose
     >
@@ -221,9 +245,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { message } from 'ant-design-vue'
-import { EditOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { EditOutlined, ReloadOutlined, ClockCircleOutlined } from '@ant-design/icons-vue'
 import dayjs from 'dayjs'
 import { getRedlineConfig, updateRedlineConfig } from '@/api/audit'
 
@@ -236,6 +260,9 @@ const platforms = [
 const activeTab = ref('admin')
 const configs = ref({})
 const loading = ref(false)
+const renderTick = ref(0)
+const lastUpdateTime = ref('')
+const lastFetchTime = ref(null)
 
 const editVisible = ref(false)
 const currentPlatform = ref('')
@@ -246,6 +273,8 @@ const confirmLoading = ref(false)
 const rollbackVisible = ref(false)
 const rollbackError = ref(null)
 const pendingFormData = ref(null)
+
+let tabChangeTimer = null
 
 const currentPlatformLabel = computed(() => {
   const p = platforms.find(p => p.value === currentPlatform.value)
@@ -276,17 +305,51 @@ const parseSecondsInput = (value) => {
   return match ? parseInt(match[1]) : 0
 }
 
-const fetchConfig = async () => {
+const fetchConfig = async (force = false) => {
+  if (loading.value) return
+  if (!force && lastFetchTime.value && Date.now() - lastFetchTime.value < 500) {
+    return
+  }
   loading.value = true
   try {
     const res = await getRedlineConfig()
     configs.value = res.all_platforms || {}
+    lastFetchTime.value = Date.now()
+    renderTick.value++
+    if (res.current_platform?.updated_at) {
+      lastUpdateTime.value = res.current_platform.updated_at
+    }
   } catch (e) {
     message.error('获取配置失败')
   } finally {
     loading.value = false
   }
 }
+
+const refreshConfig = () => {
+  fetchConfig(true)
+}
+
+const onTabChange = (key) => {
+  activeTab.value = key
+  renderTick.value++
+  if (tabChangeTimer) clearTimeout(tabChangeTimer)
+  tabChangeTimer = setTimeout(() => {
+    fetchConfig(true)
+  }, 150)
+}
+
+const clearFormCache = () => {
+  editForm.value = null
+  accessHoursRange.value = null
+  currentPlatform.value = ''
+}
+
+watch(activeTab, (newVal, oldVal) => {
+  if (newVal !== oldVal) {
+    renderTick.value++
+  }
+})
 
 const openEditModal = (platform) => {
   currentPlatform.value = platform
@@ -326,17 +389,26 @@ const handleSave = async () => {
   pendingFormData.value = formData
   confirmLoading.value = true
   try {
-    await updateRedlineConfig(formData)
+    const res = await updateRedlineConfig(formData)
     message.success('配置更新成功')
     editVisible.value = false
-    fetchConfig()
+    if (res && res.data && res.data.all_platforms) {
+      configs.value = res.data.all_platforms
+      lastUpdateTime.value = res.data.updated_at || ''
+      lastFetchTime.value = Date.now()
+      renderTick.value++
+    } else {
+      fetchConfig(true)
+    }
     pendingFormData.value = null
+    clearFormCache()
   } catch (e) {
     const errorData = e?.response?.data || e?.data || null
     if (errorData && errorData.data && errorData.data.rollback) {
       rollbackError.value = errorData.data
       editVisible.value = false
       rollbackVisible.value = true
+      fetchConfig(true)
     } else {
       message.error(errorData?.message || '保存失败')
     }
@@ -345,11 +417,18 @@ const handleSave = async () => {
   }
 }
 
+const onEditCancel = () => {
+  editVisible.value = false
+  nextTick(() => {
+    clearFormCache()
+  })
+}
+
 const closeRollback = () => {
   rollbackVisible.value = false
   rollbackError.value = null
   pendingFormData.value = null
-  fetchConfig()
+  fetchConfig(true)
 }
 
 const retrySubmit = async () => {
@@ -358,16 +437,24 @@ const retrySubmit = async () => {
   confirmLoading.value = true
   rollbackVisible.value = false
   try {
-    await updateRedlineConfig(pendingFormData.value)
+    const res = await updateRedlineConfig(pendingFormData.value)
     message.success('配置更新成功')
+    if (res && res.data && res.data.all_platforms) {
+      configs.value = res.data.all_platforms
+      lastUpdateTime.value = res.data.updated_at || ''
+      lastFetchTime.value = Date.now()
+      renderTick.value++
+    } else {
+      fetchConfig(true)
+    }
     rollbackError.value = null
     pendingFormData.value = null
-    fetchConfig()
   } catch (e) {
     const errorData = e?.response?.data || e?.data || null
     if (errorData && errorData.data && errorData.data.rollback) {
       rollbackError.value = errorData.data
       rollbackVisible.value = true
+      fetchConfig(true)
     } else {
       message.error(errorData?.message || '保存失败')
     }
@@ -377,12 +464,36 @@ const retrySubmit = async () => {
 }
 
 onMounted(() => {
-  fetchConfig()
+  fetchConfig(true)
+})
+
+onBeforeUnmount(() => {
+  if (tabChangeTimer) {
+    clearTimeout(tabChangeTimer)
+    tabChangeTimer = null
+  }
+  clearFormCache()
+  configs.value = {}
+  rollbackError.value = null
+  pendingFormData.value = null
 })
 </script>
 
 <style scoped lang="scss">
 .redline-config {
+  .card-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+
+    .title-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+  }
+
   .info-alert {
     margin-bottom: 24px;
   }

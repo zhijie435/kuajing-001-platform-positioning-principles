@@ -2,9 +2,18 @@
   <div class="page-container">
     <div class="page-header">
       <h2>License 管理</h2>
-      <el-button type="primary" @click="showVerifyDialog">
-        <el-icon><Key /></el-icon>验证并保存 License
-      </el-button>
+      <div class="page-header-actions">
+        <el-tag v-if="lastRefreshTime" type="info" size="small">
+          <el-icon><Refresh /></el-icon>
+          刷新于 {{ lastRefreshTime }}
+        </el-tag>
+        <el-button size="small" @click="refreshAll" :loading="refreshing">
+          <el-icon><Refresh /></el-icon>刷新
+        </el-button>
+        <el-button type="primary" @click="showVerifyDialog">
+          <el-icon><Key /></el-icon>验证并保存 License
+        </el-button>
+      </div>
     </div>
 
     <el-card shadow="never">
@@ -135,7 +144,14 @@
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" title="验证并保存 License Key" width="480px">
+    <el-dialog
+      v-model="dialogVisible"
+      title="验证并保存 License Key"
+      width="480px"
+      @close="onVerifyDialogClose"
+      @cancel="onVerifyDialogClose"
+      :destroy-on-close="true"
+    >
       <el-form label-width="100px">
         <el-form-item label="License Key" required>
           <el-input
@@ -157,7 +173,7 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button @click="onVerifyDialogClose">取消</el-button>
         <el-button type="primary" @click="doVerify" :loading="verifying">验证并保存</el-button>
       </template>
     </el-dialog>
@@ -217,16 +233,28 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="detailVisible" title="License 详情" width="560px">
-      <el-descriptions v-if="detail" :column="1" border>
+    <el-dialog
+      v-model="detailVisible"
+      title="License 详情"
+      width="560px"
+      @close="onDetailDialogClose"
+      :destroy-on-close="true"
+    >
+      <el-descriptions v-if="detail" :column="1" border size="default">
         <el-descriptions-item label="License Key">
           <span style="font-family:monospace">{{ detail.license_key }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="版本">
-          <el-tag :type="editionCodeTagType(detail.edition_code)">{{ detail.edition_label }}</el-tag>
+          <el-tag :type="editionCodeTagType(detail.edition_code)" size="small">
+            {{ detail.edition_label }}
+          </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="到期日期">{{ detail.expire }}</el-descriptions-item>
-        <el-descriptions-item label="剩余天数">{{ detail.days_left }} 天</el-descriptions-item>
+        <el-descriptions-item label="剩余天数">
+          <span :style="detail.days_left <= 30 ? 'color:#f56c6c;font-weight:600' : ''">
+            {{ detail.days_left }} 天
+          </span>
+        </el-descriptions-item>
         <el-descriptions-item label="用户上限">{{ detail.max_users }}</el-descriptions-item>
         <el-descriptions-item label="客户上限">{{ (detail.max_clients || 0).toLocaleString() }}</el-descriptions-item>
         <el-descriptions-item label="签发日期">{{ detail.issued_at || '-' }}</el-descriptions-item>
@@ -242,16 +270,17 @@
         </el-descriptions-item>
       </el-descriptions>
       <template #footer>
-        <el-button @click="detailVisible = false">关闭</el-button>
+        <el-button @click="onDetailDialogClose">关闭</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Key, Medal, Refresh } from '@element-plus/icons-vue'
+import dayjs from 'dayjs'
 import {
   getLicenseInfo, verifyLicense, getLicenseList, getLicenseDetail, activateLicense
 } from '@/api'
@@ -301,6 +330,8 @@ function editionCodeTagType(code) {
 
 const licenseList = ref([])
 const listLoading = ref(false)
+const refreshing = ref(false)
+const lastRefreshTime = ref('')
 
 const dialogVisible = ref(false)
 const verifying = ref(false)
@@ -320,6 +351,49 @@ function showVerifyDialog() {
   dialogVisible.value = true
 }
 
+function clearVerifyForm() {
+  verifyForm.key = ''
+  verifyForm.remark = ''
+}
+
+function onVerifyDialogClose() {
+  dialogVisible.value = false
+  nextTick(() => {
+    clearVerifyForm()
+  })
+}
+
+function onDetailDialogClose() {
+  detailVisible.value = false
+  nextTick(() => {
+    detail.value = null
+  })
+}
+
+function clearAllState() {
+  license.value = {
+    key: '', full_key: '', edition: '', edition_code: '',
+    expire: '', issued_at: '', updated_at: '',
+    days_left: 0, max_users: 0, max_clients: 0, features: []
+  }
+  licenseList.value = []
+  verifyForm.key = ''
+  verifyForm.remark = ''
+  detail.value = null
+  rollbackError.value = null
+  pendingOperation.value = null
+}
+
+async function refreshAll() {
+  refreshing.value = true
+  try {
+    await Promise.all([loadLicense(), loadList()])
+    lastRefreshTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
+  } finally {
+    refreshing.value = false
+  }
+}
+
 async function doVerify() {
   if (!verifyForm.key) {
     ElMessage.warning('请输入 License Key')
@@ -337,6 +411,8 @@ async function doVerify() {
       dialogVisible.value = false
       pendingOperation.value = null
       await Promise.all([loadLicense(), loadList()])
+      lastRefreshTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
+      clearVerifyForm()
     }
   } catch (e) {
     const errorData = e?.response?.data || e?.data || null
@@ -405,6 +481,7 @@ async function activate(row) {
       ElMessage.success('已切换激活')
       pendingOperation.value = null
       await Promise.all([loadLicense(), loadList()])
+      lastRefreshTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
     }
   } catch (e) {
     if (e === 'cancel') return
@@ -443,6 +520,7 @@ async function retryOperation() {
       rollbackError.value = null
       pendingOperation.value = null
       await Promise.all([loadLicense(), loadList()])
+      lastRefreshTime.value = dayjs().format('YYYY-MM-DD HH:mm:ss')
     }
   } catch (e) {
     const errorData = e?.response?.data || e?.data || null
@@ -458,12 +536,33 @@ async function retryOperation() {
 }
 
 onMounted(() => {
-  loadLicense()
-  loadList()
+  refreshAll()
+})
+
+onBeforeUnmount(() => {
+  clearAllState()
 })
 </script>
 
 <style lang="scss" scoped>
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+
+  h2 {
+    margin: 0;
+    font-size: 20px;
+  }
+
+  .page-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+}
+
 .license-header {
   display: flex;
   align-items: center;

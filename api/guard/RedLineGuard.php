@@ -13,7 +13,49 @@ class RedLineGuard {
 
     private static $requestCache = [];
     private static $redLineEvents = [];
-    private static $platformConfig = null;
+    private static $platformConfigCache = [];
+    private static $allPlatformConfigCache = null;
+    private static $configStorageFile = null;
+
+    private static function initConfigStorage() {
+        if (self::$configStorageFile === null) {
+            self::$configStorageFile = dirname(__DIR__) . '/storage/redline_config.json';
+        }
+    }
+
+    public static function loadPersistedConfigs() {
+        self::initConfigStorage();
+        if (!file_exists(self::$configStorageFile)) {
+            return null;
+        }
+        $content = @file_get_contents(self::$configStorageFile);
+        if (!$content) return null;
+        $data = json_decode($content, true);
+        return is_array($data) ? $data : null;
+    }
+
+    public static function persistConfigs($configs) {
+        self::initConfigStorage();
+        $dir = dirname(self::$configStorageFile);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
+        $tmp = self::$configStorageFile . '.tmp';
+        $payload = [
+            'configs' => $configs,
+            'updated_at' => date('Y-m-d H:i:s')
+        ];
+        @file_put_contents($tmp, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
+        @rename($tmp, self::$configStorageFile);
+        self::$allPlatformConfigCache = null;
+        self::$platformConfigCache = [];
+        return true;
+    }
+
+    public static function clearConfigCache() {
+        self::$platformConfigCache = [];
+        self::$allPlatformConfigCache = null;
+    }
 
     public static function validate() {
         $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -50,8 +92,8 @@ class RedLineGuard {
         if ($platform === null) {
             $platform = PlatformGuard::getCurrentPlatform();
         }
-        if (self::$platformConfig !== null) {
-            return self::$platformConfig;
+        if (isset(self::$platformConfigCache[$platform])) {
+            return self::$platformConfigCache[$platform];
         }
 
         $defaultConfig = [
@@ -68,11 +110,26 @@ class RedLineGuard {
             'sensitive_operation_2fa' => false
         ];
 
-        $platformConfigs = RED_LINE_PLATFORM_CONFIG;
+        $platformConfigs = self::getMergedPlatformConfigs();
         $platformConfig = $platformConfigs[$platform] ?? [];
 
-        self::$platformConfig = array_merge($defaultConfig, $platformConfig);
-        return self::$platformConfig;
+        self::$platformConfigCache[$platform] = array_merge($defaultConfig, $platformConfig);
+        return self::$platformConfigCache[$platform];
+    }
+
+    private static function getMergedPlatformConfigs() {
+        $configs = RED_LINE_PLATFORM_CONFIG;
+        $persisted = self::loadPersistedConfigs();
+        if ($persisted && isset($persisted['configs']) && is_array($persisted['configs'])) {
+            foreach ($persisted['configs'] as $p => $cfg) {
+                if (isset($configs[$p])) {
+                    $configs[$p] = array_merge($configs[$p], $cfg);
+                } else {
+                    $configs[$p] = $cfg;
+                }
+            }
+        }
+        return $configs;
     }
 
     public static function getPlatformRedLineStatus() {
@@ -96,8 +153,14 @@ class RedLineGuard {
     }
 
     public static function getAllPlatformRedLineStatus() {
+        if (self::$allPlatformConfigCache !== null) {
+            return self::$allPlatformConfigCache;
+        }
+
         $result = [];
         $platforms = PlatformGuard::PLATFORM_TYPES;
+        $mergedConfigs = self::getMergedPlatformConfigs();
+
         foreach ($platforms as $p) {
             $defaultConfig = [
                 'enabled' => true,
@@ -112,10 +175,11 @@ class RedLineGuard {
                 'allow_multi_device_login' => true,
                 'sensitive_operation_2fa' => false
             ];
-            $platformConfigs = RED_LINE_PLATFORM_CONFIG;
-            $platformConfig = $platformConfigs[$p] ?? [];
+            $platformConfig = $mergedConfigs[$p] ?? [];
             $result[$p] = array_merge($defaultConfig, $platformConfig);
         }
+
+        self::$allPlatformConfigCache = $result;
         return $result;
     }
 

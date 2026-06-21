@@ -74,6 +74,10 @@ class AdminController {
     }
 
     public function licenseInfo($input) {
+        $platform = PlatformGuard::getCurrentPlatform();
+        $platformConfig = RedLineGuard::getPlatformConfig($platform);
+        $allConfigs = RedLineGuard::getAllPlatformRedLineStatus();
+
         Response::success([
             'license' => CommercialGuard::getLicenseInfo(),
             'active_detail' => LicenseStore::getActive(),
@@ -83,13 +87,17 @@ class AdminController {
             ],
             'violations' => CommercialGuard::getViolations(),
             'redline_status' => [
-                'ip_whitelist' => RED_LINE_IP_WHITELIST,
-                'access_hours' => RED_LINE_ACCESS_HOURS,
-                'rate_limit' => RED_LINE_MAX_REQUESTS_PER_MINUTE,
-                'session_timeout' => RED_LINE_SESSION_TIMEOUT,
-                'current_platform' => PlatformGuard::getCurrentPlatform(),
+                'ip_whitelist' => $platformConfig['ip_whitelist'],
+                'access_hours' => $platformConfig['access_hours'],
+                'rate_limit' => $platformConfig['max_requests_per_minute'],
+                'session_timeout' => $platformConfig['session_timeout'],
+                'enabled' => $platformConfig['enabled'],
+                'ip_whitelist_enforce' => $platformConfig['ip_whitelist_enforce'],
+                'access_hours_enforce' => $platformConfig['access_hours_enforce'],
+                'current_platform' => $platform,
                 'platform_audit' => PlatformGuard::getAuditLog()
-            ]
+            ],
+            'redline_all_platforms' => $allConfigs
         ]);
     }
 
@@ -439,12 +447,21 @@ class AdminController {
             ]);
         }
 
+        $updatedConfigs = $allConfigs;
+        $updatedConfigs[$platform] = $newConfig;
+
+        $persistResult = RedLineGuard::persistConfigs($updatedConfigs);
+        RedLineGuard::clearConfigCache();
+        $refreshedConfigs = RedLineGuard::getAllPlatformRedLineStatus();
+
         Response::success([
             'platform' => $platform,
-            'config' => $newConfig,
+            'config' => $refreshedConfigs[$platform] ?? $newConfig,
             'snapshot_config' => $snapshotConfig,
             'rollback_available' => true,
-            'message' => '红线配置已更新（注：当前为模拟模式，实际使用需持久化到数据库）'
+            'persisted' => $persistResult,
+            'all_platforms' => $refreshedConfigs,
+            'updated_at' => date('Y-m-d H:i:s')
         ], '红线配置更新成功');
     }
 
