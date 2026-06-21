@@ -27,6 +27,113 @@ function processQueue(error, token = null) {
   failedQueue = []
 }
 
+const GUARD_BLOCK_CONFIG = {
+  platform: {
+    range: [4001, 4003],
+    title: '平台定位限制',
+    icon: '🚫',
+    color: '#e6a23c',
+    alertType: 'warning',
+    footer: '如需访问该功能，请切换至对应入口端登录',
+    typeLabels: {
+      platform_type_missing: '入口端标识缺失',
+      platform_type_invalid: '入口端标识无效',
+      platform_boundary_violation: '平台定位越界'
+    },
+    extractViolations: (resData) => {
+      const detail = resData?.detail || {}
+      return Array.isArray(detail.violations) ? detail.violations : []
+    }
+  },
+  commercial: {
+    range: [4100, 4199],
+    title: '商用边界限制',
+    icon: '⚠️',
+    color: '#e6a23c',
+    alertType: 'warning',
+    footer: '如需开通请联系商务部门',
+    typeLabels: {
+      invalid_license: 'License 签名无效',
+      license_expired: 'License 已过期',
+      feature_out_of_boundary: '功能超出版本边界',
+      user_limit_exceeded: '用户数已达上限',
+      client_limit_exceeded: '客户数已达上限',
+      trial_expired: '试用期已结束'
+    },
+    extractViolations: (resData) => {
+      const detail = resData?.detail
+      if (Array.isArray(detail)) return detail
+      if (Array.isArray(resData?.detail?.violations)) return resData.detail.violations
+      return []
+    }
+  },
+  redline: {
+    range: [4500, 4599],
+    title: '安全红线触发',
+    icon: '🚫',
+    color: '#f56c6c',
+    alertType: 'error',
+    footer: '此为系统安全防线，请遵守红线规则',
+    typeLabels: {},
+    extractViolations: (resData) => []
+  }
+}
+
+function formatViolationData(data) {
+  if (!data || typeof data !== 'object' || !Object.keys(data).length) return ''
+  return Object.entries(data).map(([k, val]) => {
+    if (Array.isArray(val)) return `${k}: ${val.join('、')}`
+    return `${k}: ${val}`
+  }).join(' / ')
+}
+
+function buildViolationHtml(violations, typeLabels) {
+  if (!violations.length) return ''
+  return violations.map(v => {
+    const typeLabel = typeLabels[v.type] || v.type
+    const dataStr = formatViolationData(v.data)
+    return `<div style="font-size:12px;color:#909399;margin-top:4px;padding-left:12px">· ${typeLabel}${dataStr ? `（${dataStr}）` : ''}</div>`
+  }).join('')
+}
+
+function showGuardBlock(blockType, code, msg, resData) {
+  const cfg = GUARD_BLOCK_CONFIG[blockType]
+  if (!cfg) return false
+
+  const violations = cfg.extractViolations(resData)
+  const violationHtml = buildViolationHtml(violations, cfg.typeLabels)
+
+  const detailLine = blockType === 'redline' && resData?.detail
+    ? `<div style="margin-top:8px;font-size:12px;color:#909399">详情：${JSON.stringify(resData.detail)}</div>`
+    : ''
+
+  ElMessageBox.alert(
+    `<div style="line-height:1.8">
+      <div style="font-weight:bold;margin-bottom:8px;color:${cfg.color}">${cfg.icon} ${cfg.title}</div>
+      <div>${msg}</div>
+      ${violationHtml}
+      ${detailLine}
+      <div style="margin-top:8px;font-size:12px;color:#909399">${cfg.footer}，错误码：${code}</div>
+    </div>`,
+    '访问受限',
+    {
+      confirmButtonText: '我知道了',
+      type: cfg.alertType,
+      dangerouslyUseHTMLString: true
+    }
+  )
+  return true
+}
+
+function matchGuardBlock(code) {
+  for (const [blockType, cfg] of Object.entries(GUARD_BLOCK_CONFIG)) {
+    if (code >= cfg.range[0] && code <= cfg.range[1]) {
+      return blockType
+    }
+  }
+  return null
+}
+
 service.interceptors.request.use(
   config => {
     const userStore = useUserStore()
@@ -82,68 +189,14 @@ service.interceptors.response.use(
       return Promise.reject(new Error(msg))
     }
 
-    if (code === 4003) {
-      ElMessage.error({ message: '⛔ ' + msg, duration: 5000 })
+    const guardBlock = matchGuardBlock(code)
+    if (guardBlock) {
+      showGuardBlock(guardBlock, code, msg, res.data)
       return Promise.reject(new Error(msg))
     }
 
     if (code === 403) {
       ElMessage.error({ message: '⛔ 无权限访问: ' + msg, duration: 5000 })
-      return Promise.reject(new Error(msg))
-    }
-
-    if (code >= 4100 && code < 4200) {
-      const violations = Array.isArray(res.data?.detail) ? res.data.detail : []
-      const violationHtml = violations.length
-        ? violations
-            .map(v => {
-              const typeLabel = {
-                invalid_license: 'License 签名无效',
-                license_expired: 'License 已过期',
-                feature_out_of_boundary: '功能超出版本边界',
-                user_limit_exceeded: '用户数已达上限',
-                client_limit_exceeded: '客户数已达上限',
-                trial_expired: '试用期已结束'
-              }[v.type] || v.type
-              const dataStr = v.data && Object.keys(v.data).length
-                ? Object.entries(v.data).map(([k, val]) => `${k}: ${val}`).join(' / ')
-                : ''
-              return `<div style="font-size:12px;color:#909399;margin-top:4px;padding-left:12px">· ${typeLabel}${dataStr ? `（${dataStr}）` : ''}</div>`
-            })
-            .join('')
-        : ''
-
-      ElMessageBox.alert(
-        `<div style="line-height:1.8">
-          <div style="font-weight:bold;margin-bottom:8px;color:#e6a23c">⚠️ 商用边界限制</div>
-          <div>${msg}</div>
-          ${violationHtml}
-          <div style="margin-top:8px;font-size:12px;color:#909399">如需开通请联系商务部门，错误码：${code}</div>
-        </div>`,
-        '访问受限',
-        {
-          confirmButtonText: '我知道了',
-          type: 'warning',
-          dangerouslyUseHTMLString: true
-        }
-      )
-      return Promise.reject(new Error(msg))
-    }
-
-    if (code >= 4500 && code < 4600) {
-      ElMessageBox.alert(
-        `<div style="line-height:1.8">
-          <div style="font-weight:bold;margin-bottom:8px;color:#f56c6c">🚫 安全红线触发</div>
-          <div>${msg}</div>
-          ${res.data?.detail ? `<div style="margin-top:8px;font-size:12px;color:#909399">详情：${JSON.stringify(res.data.detail)}</div>` : ''}
-        </div>`,
-        '访问被拦截',
-        {
-          confirmButtonText: '我知道了',
-          type: 'error',
-          dangerouslyUseHTMLString: true
-        }
-      )
       return Promise.reject(new Error(msg))
     }
 
@@ -168,6 +221,7 @@ service.interceptors.response.use(
     const status = error.response?.status
     const data = error.response?.data
     const code = data?.code
+    const msg = data?.message || '请求异常'
 
     if (code && code >= 4600 && code < 4700 && data?.data?.rollback) {
       return Promise.reject({
@@ -178,7 +232,13 @@ service.interceptors.response.use(
       })
     }
 
-    if (status === 401 || status === 4201) {
+    const guardBlock = code ? matchGuardBlock(code) : null
+    if (guardBlock) {
+      showGuardBlock(guardBlock, code, msg, data?.data)
+      return Promise.reject(new Error(msg))
+    }
+
+    if (status === 401 || code === 401 || code === 4201) {
       const userStore = useUserStore()
       userStore.logout()
       router.push({ name: 'login' })
@@ -186,8 +246,8 @@ service.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    if (status === 403) {
-      ElMessage.error('无权限访问该资源')
+    if (status === 403 || code === 403) {
+      ElMessage.error(msg || '无权限访问该资源')
       return Promise.reject(error)
     }
 
@@ -196,9 +256,14 @@ service.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    if (status === 400) {
+    if (status === 400 && !code) {
       ElMessage.error(data?.message || '请求参数错误')
       return Promise.reject(error)
+    }
+
+    if (code) {
+      ElMessage.error(msg)
+      return Promise.reject(new Error(msg))
     }
 
     if (!window.navigator.onLine) {
@@ -206,7 +271,7 @@ service.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    ElMessage.error(data?.message || '网络请求失败: ' + error.message)
+    ElMessage.error(msg || '网络请求失败: ' + error.message)
     return Promise.reject(error)
   }
 )

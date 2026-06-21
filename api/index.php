@@ -26,7 +26,14 @@ try {
     $router->dispatch();
 } catch (Exception $e) {
     $code = $e->getCode() ?: 500;
-    if ($code >= 4100 && $code < 4200) {
+
+    if ($code >= 4001 && $code <= 4003) {
+        Response::platformBlock($code, $e->getMessage(), [
+            'violations' => PlatformGuard::getViolations(),
+            'audit_log' => PlatformGuard::getAuditLog(),
+            'platform_info' => PlatformGuard::getPlatformInfo()
+        ]);
+    } elseif ($code >= 4100 && $code < 4200) {
         Response::commercialBlock($code, $e->getMessage(), CommercialGuard::getViolations());
     } else {
         Response::error($code, $e->getMessage());

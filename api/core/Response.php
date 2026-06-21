@@ -52,4 +52,11 @@ class Response {
             'detail' => $detail
         ]);
     }
+
+    public static function platformBlock($code, $message, $detail = null) {
+        self::error($code, '平台定位限制: ' . $message, [
+            'block_type' => 'platform',
+            'detail' => $detail
+        ]);
+    }
 }

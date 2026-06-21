@@ -3,8 +3,19 @@ class PlatformGuard {
     const PLATFORM_TYPES = ['admin', 'sales', 'client'];
     const HEADER_PLATFORM = 'HTTP_X_PLATFORM_TYPE';
 
+    const ERROR_PLATFORM_TYPE_MISSING = 4001;
+    const ERROR_PLATFORM_TYPE_INVALID = 4002;
+    const ERROR_PLATFORM_BOUNDARY_VIOLATION = 4003;
+
     private static $currentPlatform = null;
     private static $auditLog = [];
+    private static $violations = [];
+
+    private static $platformLabels = [
+        'admin' => '管理端',
+        'sales' => '销售端',
+        'client' => '客户端'
+    ];
 
     public static function validate() {
         $requestUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -17,24 +28,47 @@ class PlatformGuard {
             : null;
 
         if (!$platformType) {
-            throw new Exception('平台类型标识缺失，请通过 X-Platform-Type 指定入口端', 4001);
+            self::recordViolation('platform_type_missing', [
+                'header' => 'X-Platform-Type',
+                'uri' => $requestUri
+            ]);
+            throw new Exception(
+                '未能识别您的入口端类型。请通过正确的端登录（管理端/销售端/客户端），或联系管理员检查请求头标识。',
+                self::ERROR_PLATFORM_TYPE_MISSING
+            );
         }
 
         if (!in_array($platformType, self::PLATFORM_TYPES)) {
-            throw new Exception(sprintf(
-                '非法平台类型: %s，仅允许: %s',
-                $platformType,
-                implode('/', self::PLATFORM_TYPES)
-            ), 4002);
+            self::recordViolation('platform_type_invalid', [
+                'provided' => $platformType,
+                'allowed' => self::PLATFORM_TYPES,
+                'uri' => $requestUri
+            ]);
+            throw new Exception(
+                sprintf('入口端标识无效，仅支持：管理端 / 销售端 / 客户端。请重新从正确的入口登录。'),
+                self::ERROR_PLATFORM_TYPE_INVALID
+            );
         }
 
         self::$currentPlatform = $platformType;
 
         if (!self::checkEndpointBoundary($requestUri, $platformType)) {
-            throw new Exception(sprintf(
-                '平台定位越界: [%s]端 无权访问该接口',
-                $platformType
-            ), 4003);
+            $allowed = PLATFORM_ENDPOINTS[$platformType] ?? [];
+            self::recordViolation('platform_boundary_violation', [
+                'platform' => $platformType,
+                'platform_label' => self::$platformLabels[$platformType] ?? $platformType,
+                'uri' => $requestUri,
+                'allowed_modules' => $allowed
+            ]);
+            throw new Exception(
+                sprintf(
+                    '当前入口（%s）无权访问该功能。%s端可用模块：%s。如需访问请切换至对应入口端登录。',
+                    self::$platformLabels[$platformType] ?? $platformType,
+                    self::$platformLabels[$platformType] ?? $platformType,
+                    implode('、', $allowed)
+                ),
+                self::ERROR_PLATFORM_BOUNDARY_VIOLATION
+            );
         }
 
         self::audit('platform_access', [
@@ -47,18 +81,8 @@ class PlatformGuard {
     }
 
     private static function isPublicEndpoint($uri) {
-        $publicPatterns = [
-            '#^/api/auth/login$#',
-            '#^/api/auth/platform-info$#',
-            '#^/api/auth/refresh$#',
-            '#^/api/$#'
-        ];
-        foreach ($publicPatterns as $pattern) {
-            if (preg_match($pattern, $uri)) {
-                return true;
-            }
-        }
-        return false;
+        return (bool)preg_match('#^/api/auth/(login|platform-info|refresh)$#', $uri)
+            || (bool)preg_match('#^/api/?$#', $uri);
     }
 
     private static function checkEndpointBoundary($uri, $platformType) {
@@ -103,7 +127,9 @@ class PlatformGuard {
             'version' => PLATFORM_VERSION,
             'type' => PLATFORM_TYPE,
             'platforms' => self::PLATFORM_TYPES,
-            'current' => self::$currentPlatform
+            'platform_labels' => self::$platformLabels,
+            'current' => self::$currentPlatform,
+            'endpoints' => PLATFORM_ENDPOINTS
         ];
     }
 
@@ -117,6 +143,23 @@ class PlatformGuard {
 
     public static function getAuditLog() {
         return self::$auditLog;
+    }
+
+    private static function recordViolation($type, $data) {
+        self::$violations[] = [
+            'type' => $type,
+            'data' => $data,
+            'time' => date('Y-m-d H:i:s'),
+            'uri' => parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH)
+        ];
+    }
+
+    public static function getViolations() {
+        return self::$violations;
+    }
+
+    public static function getPlatformLabels() {
+        return self::$platformLabels;
     }
 
     private static function getClientIp() {
